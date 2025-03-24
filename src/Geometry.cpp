@@ -109,7 +109,9 @@ void SphericalGeometry::generateGrid(
     float scale)
 {
     constexpr float pi = glm::pi<float>();
-    const float R = gridSize / 2.0f;
+    const float R = scale / 2.0f;
+
+    // Generate vertices
     for ( int i = 0; i <= gridSize; ++i )
     {
         const float theta = pi * i / gridSize;
@@ -128,15 +130,44 @@ void SphericalGeometry::generateGrid(
         }
     }
 
+    // Generate indices as lines
     for ( int i = 0; i < gridSize; ++i )
     {
         for ( int j = 0; j < gridSize; ++j )
         {
             uint32_t idx = i * (gridSize + 1) + j;
-            indices.push_back(idx); indices.push_back(idx + 1);
-            indices.push_back(idx); indices.push_back(idx + (gridSize + 1));
+            uint32_t idxRight = idx + 1;
+            uint32_t idxBottom = idx + (gridSize + 1);
+
+            // Horizontal lines (constant theta, varying phi) - latitude
+            if ( i != 0 && i != gridSize - 1 ) // Skip poles
+            {
+                if ( j == gridSize - 1 )
+                {
+                    uint32_t idxFirstInRow = i * (gridSize + 1);
+                    indices.push_back(idx);
+                    indices.push_back(idxFirstInRow);
+                }
+                else
+                {
+                    indices.push_back(idx);
+                    indices.push_back(idxRight);
+                }
+            }
+
+            // Vertical lines (constant phi, varying theta) - longitude
+            if ( j != gridSize - 1 ) // Skip the last column
+            {
+                // Only draw vertical lines between non-pole vertices
+                if (i != 0 && i != gridSize - 1)
+                {
+                    indices.push_back(idx);
+                    indices.push_back(idxBottom);
+                }
+            }
         }
     }
+
 }
 
 float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
@@ -185,7 +216,7 @@ void SphericalGeometry::warpGrid(
 {
     std::vector<Vertex> baseVertices;
     std::vector<uint32_t> dummyIndices;
-    generateGrid(baseVertices, dummyIndices, 20, 20.0f);
+    generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
     const float R = glm::length(vertices[0].position);
     for ( Vertex& vertex : baseVertices )
     {
@@ -216,31 +247,47 @@ void HyperbolicGeometry::generateGrid(
     uint32_t gridSize,
     float scale)
 {
-    const float R = scale / 2.0f;
+    // Generate vertices
     for ( int i = 0; i <= gridSize; ++i )
     {
-        const float r = i * 1.0f / gridSize;
         for ( int j = 0; j <= gridSize; ++j )
         {
-            const float phi = 2.0f * glm::pi<float>() * j / gridSize;
-            const float hyperbolicR = tanh(r * 2.0f);
-            const float x = R * hyperbolicR * cos(phi);
-            const float y = R * hyperbolicR * sin(phi);
             Vertex vertex{};
-            vertex.position = glm::vec3(x, y, 0.0f);
+            // Map i, j to x, y coordinates in the range [-scale/2, scale/2]
+            const float x = (static_cast<float>(i) / gridSize - 0.5f) * scale;
+            const float y = (static_cast<float>(j) / gridSize - 0.5f) * scale;
+            // Hyperbolic paraboloid: z = (x^2 - y^2) / k
+            const float k = scale; // Adjust this to control curvature (smaller k = more pronounced saddle)
+            const float z = (x * x - y * y) / k;
+            vertex.position = glm::vec3(x, y, z);
             vertex.color = glm::vec3(1.0f);
-            vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+            // Compute the normal (partial derivatives of z = (x^2 - y^2) / k)
+            const float dz_dx = (2.0f * x) / k; // ∂z/∂x = 2x/k
+            const float dz_dy = (-2.0f * y) / k; // ∂z/∂y = -2y/k
+            const auto tangent_x = glm::vec3(1.0f, 0.0f, dz_dx);
+            const auto tangent_y = glm::vec3(0.0f, 1.0f, dz_dy);
+            vertex.normal = glm::normalize(glm::cross(tangent_y, tangent_x)); // Normal is cross product of tangents
             vertices.push_back(vertex);
         }
     }
 
+    // Generate indices as lines
     for ( int i = 0; i < gridSize; ++i )
     {
         for ( int j = 0; j < gridSize; ++j )
         {
             uint32_t idx = i * (gridSize + 1) + j;
-            indices.push_back(idx); indices.push_back(idx + 1);
-            indices.push_back(idx); indices.push_back(idx + (gridSize + 1));
+            uint32_t idxRight = idx + 1;
+            uint32_t idxBottom = idx + (gridSize + 1);
+
+            // Horizontal line (constant i, varying j)
+            indices.push_back(idx);
+            indices.push_back(idxRight);
+
+            // Vertical line (constant j, varying i)
+            indices.push_back(idx);
+            indices.push_back(idxBottom);
         }
     }
 }
@@ -286,7 +333,7 @@ void HyperbolicGeometry::warpGrid(
 {
     std::vector<Vertex> baseVertices;
     std::vector<uint32_t> dummyIndices;
-    generateGrid(baseVertices, dummyIndices, 20, 20.0f);
+    generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
 
     constexpr float R = 10.0f;
     for ( Vertex& vertex : baseVertices )

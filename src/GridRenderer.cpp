@@ -133,9 +133,12 @@ void GridRenderer::generateGrid()
 
     /// Initialize Grid object with geometrized grid
     m_Geometry->generateGrid(m_Vertices, m_Indices, m_GridSize, m_GridScale);
+
+    const uint32_t gridIndexCount = static_cast<uint32_t>(m_Indices.size());
     m_GridObject.indexOffset = 0;
-    m_GridObject.indexCount = static_cast<uint32_t>(m_Indices.size());
+    m_GridObject.indexCount = gridIndexCount;
     m_GridObject.modelMatrix = glm::mat4(1.0f);
+
 
     for ( const auto& shape : m_MassiveObjects )
         shape->addVertices(m_Vertices, m_Indices);
@@ -452,8 +455,11 @@ void GridRenderer::createGraphicsPipeline()
 
     // --- Grid Pipeline ---
     vk::PipelineInputAssemblyStateCreateInfo gridInputAssembly{};
-    gridInputAssembly.setTopology(vk::PrimitiveTopology::eLineList)
-                     .setPrimitiveRestartEnable(VK_FALSE);
+    gridInputAssembly
+        .setTopology(
+            m_CurrentGeometryType == GeometryType::Flat ?
+            vk::PrimitiveTopology::eLineList : vk::PrimitiveTopology::eTriangleList)
+        .setPrimitiveRestartEnable(VK_FALSE);
 
     vk::PipelineRasterizationStateCreateInfo gridRasterizer{};
     gridRasterizer.setDepthClampEnable(VK_FALSE)
@@ -533,7 +539,11 @@ void GridRenderer::updateGeometry(GeometryType type)
             glm::vec3 currentPos = shape->m_Object.modelMatrix[3];
 
             // Convert the position from the old geometry type to the new one
-            glm::vec3 newPos = convertCoordinates(currentPos, m_CurrentGeometryType, type, m_GridScale / 2.0f);
+            glm::vec3 newPos = convertCoordinates(
+                currentPos,
+                m_CurrentGeometryType,
+                type,
+                m_GridScale / 2.0f);
 
             // Update the modelMatrix with the new position
             shape->m_Object.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
@@ -958,15 +968,30 @@ void GridRenderer::renderCameraControls()
 
     if ( ImGui::Button("Reset Camera") )
     {
-        m_Camera.position = glm::vec3(0.0f, 20.0f, 20.0f);
+        switch ( m_CurrentGeometryType )
+        {
+            case GeometryType::Spherical:
+            {
+                m_Camera.position = glm::vec3(0.0f, 0.0f, m_GridScale * 1.5f); // Outside the sphere
+                m_Camera.azimuth = 90.0f;
+                m_Camera.elevation = 0.0f;
+                m_Camera.radius = m_GridScale * 1.5f;
+                break;
+            }
+            default:
+            {
+                m_Camera.position = glm::vec3(0.0f, 20.0f, 20.0f);
+                m_Camera.azimuth = glm::radians(45.0f);
+                m_Camera.elevation = glm::radians(45.0f);
+                m_Camera.radius = 30.0f;
+                    break;
+            }
+        }
         m_Camera.target = glm::vec3(0.0f, 0.0f, 0.0f);
         m_Camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
         m_Camera.fov = 90.0f;
         m_Camera.nearPlane = 0.1f;
         m_Camera.farPlane = 100.0f;
-        m_Camera.azimuth = glm::radians(45.0f);
-        m_Camera.elevation = glm::radians(45.0f);
-        m_Camera.radius = 30.0f;
         m_Camera.minRadius = 5.0f;
         m_Camera.maxRadius = 100.0f;
         m_Camera.panSpeed = 0.1f;
