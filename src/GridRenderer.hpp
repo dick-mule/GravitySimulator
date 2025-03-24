@@ -72,6 +72,8 @@ private:
     float m_KineticEnergy = 0.0f;
     float m_PotentialEnergy = 0.0f;
     float m_TimeStep = 0.05f;
+    float m_VelocityAngle = 0.0f;
+    float m_OrbitFactor = 1.0f;
 
     struct Trail {
         std::deque<glm::vec3> positions;

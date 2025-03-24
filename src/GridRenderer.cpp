@@ -80,6 +80,18 @@ GridRenderer::GridRenderer(
     sphereObj.modelMatrix = glm::translate(glm::mat4(1.0f), converted_coords2);
     m_MassiveObjects.push_back(std::make_unique<Sphere>(sphereObj));
 
+    /// ADDING THIS CAUSES NAN AND SIM TO BREAK
+    Object sphereObj2{};
+    sphereObj2.mass = 9.0f;
+    constexpr auto og_coords3 = glm::vec3(0.0f, 0.0f, -20.0f);
+    const glm::vec3 converted_coords3 = convertCoordinates(
+        og_coords3,
+        GeometryType::Flat,
+        geometryType,
+        static_cast<float>(m_GridSize) / 2);
+    sphereObj2.modelMatrix = glm::translate(glm::mat4(1.0f), converted_coords3);
+    m_MassiveObjects.push_back(std::make_unique<Sphere>(sphereObj2));
+
     // Initialize trails
     m_Trails.resize(m_MassiveObjects.size());
     for ( auto& trail : m_Trails )
@@ -157,36 +169,83 @@ void GridRenderer::generateGrid()
             com /= totalMass;
 
         // Adjust positions relative to center of mass
-        float dist = m_Geometry->computeDistance(
-            m_MassiveObjects[0]->m_Object.modelMatrix[3],
-            m_MassiveObjects[1]->m_Object.modelMatrix[3]
-        );
+        glm::vec3 pos1 = m_MassiveObjects[0]->m_Object.modelMatrix[3];
+        glm::vec3 pos2 = m_MassiveObjects[1]->m_Object.modelMatrix[3];
+        if ( m_CurrentGeometryType == GeometryType::Spherical )
+            std::cout << "Positions in generateGrid: pos1 = (" << pos1.x << ", " << pos1.y << ", " << pos1.z
+                      << "), pos2 = (" << pos2.x << ", " << pos2.y << ", " << pos2.z << ")" << std::endl;
+
+        float dist = m_Geometry->computeDistance(pos1, pos2);
         if ( dist < 0.01f )
-            dist = 0.01f;
+        {
+            // Fallback to a reasonable distance if the objects are too close
+            dist = glm::length(m_MassiveObjects[0]->m_Object.modelMatrix[3] - m_MassiveObjects[1]->m_Object.modelMatrix[3]);
+            if ( dist < 0.01f )
+                dist = 10.0f; // Use a default distance to avoid excessive velocity
+            std::cout << "Warning: Adjusted distance to " << dist << " due to small computed distance" << std::endl;
+        }
+
+        // std::cout << "COM: " << vecToString(com) << std::endl;
         for ( const auto& shape : m_MassiveObjects )
             shape->m_Object.modelMatrix[3] -= glm::vec4(com, 0.0f);
 
         // Ensure velocity is perpendicular to radius in the correct plane
         const float mu = m_Gravity * (m_MassiveObjects[0]->m_Object.mass + m_MassiveObjects[1]->m_Object.mass);
-        const float v = std::sqrt(mu / dist);
+        float v = std::sqrt(mu / dist);
+        if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
+            v *= m_OrbitFactor; // Adjust velocity magnitude for hyperbolic geometry
+
         auto r = glm::vec3(m_MassiveObjects[1]->m_Object.modelMatrix[3]);
         r -= glm::vec3(m_MassiveObjects[0]->m_Object.modelMatrix[3]);
-        glm::vec3 tangent;
+        glm::vec3 tangent, bitangent;
         if ( m_CurrentGeometryType == GeometryType::Spherical )
         {
-            // For spherical, use the tangent in the phi direction
-            const float phi = atan2(r.y, r.x);
-            tangent = glm::vec3(-sin(phi), cos(phi), 0.0f);
-        } else
-        {
-            // For flat/hyperbolic, orbit in x-y plane
-            tangent = glm::normalize(glm::vec3(-r.y, 0.0f, r.x));
+            float r1 = glm::length(pos1);
+            float theta = atan2(pos1.z, pos1.x);
+            float phi = acos(glm::clamp(pos1.y / r1, -1.0f, 1.0f));
+
+            // Tangent vectors at pos1
+            glm::vec3 normal = glm::normalize(pos1);
+            tangent = glm::vec3(-sin(theta), 0.0f, cos(theta)); // d/dtheta (east-west)
+            bitangent = glm::cross(normal, tangent); // d/dphi (north-south)
         }
-        m_MassiveObjects[0]->m_Object.velocity = v * tangent * (m_MassiveObjects[1]->m_Object.mass / totalMass);
-        m_MassiveObjects[1]->m_Object.velocity = -v * tangent * (m_MassiveObjects[0]->m_Object.mass / totalMass);
-        // Debug the tangent and velocity
-        std::cout << "Distance: " << dist << ", mu: " << mu << ", v: " << v << "\n";
-        std::cout << "Tangent: (" << tangent.x << ", " << tangent.y << ", " << tangent.z << ")\n";
+        else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
+        {
+            // Tangent is perpendicular to r in xy-plane
+            tangent = glm::normalize(glm::vec3(-r.y, r.x, 0.0f));
+            if ( glm::length(tangent) < 0.01f )
+                tangent = glm::vec3(0.0f, 1.0f, 0.0f); // Fallback
+
+            // Bitangent is along r in xy-plane
+            bitangent = glm::normalize(glm::vec3(r.x, r.y, 0.0f));
+            if ( glm::length(bitangent) < 0.01f )
+                bitangent = glm::normalize(glm::vec3(-tangent.y, tangent.x, 0.0f));
+        }
+        else
+        {
+            tangent = glm::normalize(glm::vec3(-r.y, 0.0f, r.x));
+            if ( glm::length(bitangent) < 0.01f )
+            {
+                // Choose a vector orthogonal to tangent
+                if ( std::abs(tangent.x) > std::abs(tangent.z) )
+                    bitangent = glm::normalize(glm::vec3(-tangent.y * tangent.z, tangent.x * tangent.z, -(tangent.x * tangent.x + tangent.y * tangent.y)));
+                else
+                    bitangent = glm::normalize(glm::vec3(-(tangent.z * tangent.z + tangent.y * tangent.y), tangent.x * tangent.y, tangent.x * tangent.z));
+            }
+            else
+            {
+                bitangent = glm::normalize(bitangent);
+            }
+        }
+
+        float angleRad = glm::radians(m_VelocityAngle);
+        const float cosTheta = cos(angleRad);
+        const float sinTheta = sin(angleRad);
+        const auto vDir = cosTheta * tangent + sinTheta * bitangent;
+        glm::vec3 velocityDir = glm::normalize(vDir);
+
+        m_MassiveObjects[0]->m_Object.velocity = v * velocityDir * (m_MassiveObjects[1]->m_Object.mass / totalMass);
+        m_MassiveObjects[1]->m_Object.velocity = -v * velocityDir * (m_MassiveObjects[0]->m_Object.mass / totalMass);
 
         // Additional shapes start stationary
         for ( size_t i = 2; i < m_MassiveObjects.size(); ++i )
@@ -533,7 +592,39 @@ void GridRenderer::updateGeometry(GeometryType type)
 {
     if ( m_CurrentGeometryType != type )
     {
+        float angularMomentum = 0.0f;
+        float eccentricity = 0.0f;
+        float mu = 0.0f;
+        float dist = 0.0f;
+        if ( m_MassiveObjects.size() >= 2 )
+        {
+            glm::vec3 pos1 = m_MassiveObjects[0]->m_Object.modelMatrix[3];
+            glm::vec3 pos2 = m_MassiveObjects[1]->m_Object.modelMatrix[3];
+            glm::vec3 vel1 = m_MassiveObjects[0]->m_Object.velocity;
+            glm::vec3 vel2 = m_MassiveObjects[1]->m_Object.velocity;
+
+            // Compute relative position and velocity
+            glm::vec3 r = pos2 - pos1;
+            glm::vec3 v = vel2 - vel1;
+            dist = m_Geometry->computeDistance(pos1, pos2);
+            if ( dist < 0.01f )
+                dist = 0.01f;
+
+            // Compute specific angular momentum
+            angularMomentum = glm::length(glm::cross(r, v)) / dist; // Specific angular momentum per unit mass
+
+            // Compute specific mechanical energy
+            mu = m_Gravity * (m_MassiveObjects[0]->m_Object.mass + m_MassiveObjects[1]->m_Object.mass);
+            float speed = glm::length(v);
+            float energy = (speed * speed) / 2.0f - mu / dist;
+
+            // Compute eccentricity
+            eccentricity = sqrt(1.0f + (2.0f * energy * angularMomentum * angularMomentum) / (mu * mu));
+            std::cout << "Before switch - Angular Momentum: " << angularMomentum << ", Eccentricity: " << eccentricity << std::endl;
+        }
+
         m_Geometry = geometryFactory(type, m_GridSize, m_GridScale);
+        std::vector<glm::vec3> newPositions;
         for ( auto& shape : m_MassiveObjects )
         {
             glm::vec3 currentPos = shape->m_Object.modelMatrix[3];
@@ -547,10 +638,52 @@ void GridRenderer::updateGeometry(GeometryType type)
 
             // Update the modelMatrix with the new position
             shape->m_Object.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
-
-            // Log the new position for debugging
+            shape->m_Object.velocity = glm::vec3(0.0f); // Reset velocity
             std::cout << "Object at (" << currentPos.x << ", " << currentPos.y << ", " << currentPos.z
-                      << ") converted to (" << newPos.x << ", " << newPos.y << ", " << newPos.z << ")\n";
+                      << ") converted to (" << newPos.x << ", " << newPos.y << ", " << newPos.z
+                      << "), magnitude: " << glm::length(newPos) << "\n";
+        }
+
+        // Step 3: Update m_VelocityAngle based on the new geometry
+        if ( type == GeometryType::Hyperbolic && m_CurrentGeometryType == GeometryType::Flat )
+        {
+            // Adjust m_VelocityAngle to preserve orbit characteristics
+            // In flat geometry, m_VelocityAngle = 0 gives a circular orbit (e ~ 0)
+            // In hyperbolic geometry, we need to adjust the angle to achieve a similar eccentricity
+            if ( eccentricity < 0.1f ) // Circular orbit in flat space
+                m_VelocityAngle = 0.0f; // Maximize angular momentum in hyperbolic space
+            else if ( eccentricity < 1.0f ) // Elliptical orbit
+                m_VelocityAngle = 45.0f * eccentricity; // Map eccentricity to an angle: e = 0 -> angle = 0, e = 1 -> angle = 45
+            else  // Hyperbolic or linear trajectory
+                m_VelocityAngle = 45.0f; // Allow for more linear motion
+            std::cout << "Adjusted m_VelocityAngle to " << m_VelocityAngle << " for hyperbolic geometry" << std::endl;
+        }
+        else if ( type == GeometryType::Flat && m_CurrentGeometryType == GeometryType::Hyperbolic )
+        {
+            // Recompute dist in the new geometry (flat)
+            float newDist = 0.0f;
+            if ( m_MassiveObjects.size() >= 2 )
+            {
+                glm::vec3 pos1 = m_MassiveObjects[0]->m_Object.modelMatrix[3];
+                glm::vec3 pos2 = m_MassiveObjects[1]->m_Object.modelMatrix[3];
+                newDist = m_Geometry->computeDistance(pos1, pos2);
+                if ( newDist < 0.01f )
+                    newDist = 0.01f;
+            }
+
+            // Compute maximum angular momentum for a circular orbit in flat geometry
+            float h_max = sqrt(mu * newDist);
+            const float normalizedAngularMomentum = angularMomentum / h_max;
+
+            // Adjust m_VelocityAngle based on normalized angular momentum
+            if ( normalizedAngularMomentum > 0.8f ) // High angular momentum (circular-like)
+                m_VelocityAngle = 0.0f;
+            else if ( normalizedAngularMomentum > 0.2f ) // Medium angular momentum (elliptical)
+                m_VelocityAngle = 45.0f * (1.0f - (normalizedAngularMomentum - 0.2f) / 0.6f);
+            else // Low angular momentum (linear)
+                m_VelocityAngle = 45.0f;
+            m_OrbitFactor = 1.0f; // Reset orbit factor for flat geometry
+            std::cout << "Adjusted m_VelocityAngle to " << m_VelocityAngle << " for flat geometry" << std::endl;
 
         }
 
@@ -818,7 +951,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    m_Geometry->warpGrid(m_Vertices, massivePositions, masses, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
@@ -844,45 +977,105 @@ void GridRenderer::updateSimulation(float deltaTime)
 {
     deltaTime = std::min(deltaTime, m_TimeStep);
 
-    // Reset accelerations
-    for ( auto& shape : m_MassiveObjects )
-        shape->m_Object.acceleration = glm::vec3(0.0f);
+    // Step 1: Compute accelerations for all objects
+    for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
+    {
+        m_MassiveObjects[i]->m_Object.acceleration = glm::vec3(0.0f); // Reset acceleration
+        // std::cout << "Object " << i << " Initial Pos: " << vecToString(m_MassiveObjects[i]->m_Object.modelMatrix[3])
+        //           << " Vel: " << vecToString(m_MassiveObjects[i]->m_Object.velocity) << "\n";
 
+    }
+
+    // Compute pairwise forces symmetrically
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         for ( size_t j = i + 1; j < m_MassiveObjects.size(); ++j )
-        {
-            Object& obj1 = m_MassiveObjects[i]->m_Object;
-            Object& obj2 = m_MassiveObjects[j]->m_Object;
+        {   // Only iterate over j > i to avoid double-counting
+            auto& shape1 = m_MassiveObjects[i];
+            auto& shape2 = m_MassiveObjects[j];
 
-            const glm::vec3 pos1 = obj1.modelMatrix[3];
-            const glm::vec3 pos2 = obj2.modelMatrix[3];
-            const glm::vec3 r = pos2 - pos1;
-            constexpr float minDistance = 0.5f; // Approximate size of shapes
-            if ( glm::length(r) < minDistance )
-            {
-                // Simple elastic collision
-                const glm::vec3 avgVelocity = (
-                        obj1.velocity * obj1.mass +
-                        obj2.velocity * obj2.mass
-                    ) / (obj1.mass + obj2.mass);
-                obj1.velocity = avgVelocity;
-                obj2.velocity = avgVelocity;
-            }
-
+            glm::vec3 pos1 = shape1->m_Object.modelMatrix[3];
+            glm::vec3 pos2 = shape2->m_Object.modelMatrix[3];
             float dist = m_Geometry->computeDistance(pos1, pos2);
             if ( dist < 0.01f )
                 dist = 0.01f;
 
-            constexpr float softeningLength = 1.0f; // Same as in warpGrid
-            float softenedDistSquared = dist * dist + softeningLength * softeningLength;
-            const float forceMagnitude = m_Gravity * obj1.mass * obj2.mass / softenedDistSquared;
-            const glm::vec3 forceDir = glm::normalize(r);
+            glm::vec3 direction;
+            if ( m_CurrentGeometryType == GeometryType::Spherical )
+            {
+                float r1 = glm::length(pos1);
+                float r2 = glm::length(pos2);
+                if ( r1 < 0.01f || r2 < 0.01f )
+                    continue;
 
-            const glm::vec3 force = forceDir * forceMagnitude;
-            obj1.acceleration += force / obj1.mass;
-            obj2.acceleration -= force / obj2.mass;
+                float theta1 = atan2(pos1.z, pos1.x);
+                float phi1 = acos(glm::clamp(pos1.y / r1, -1.0f, 1.0f));
+                float theta2 = atan2(pos2.z, pos2.x);
+                float phi2 = acos(glm::clamp(pos2.y / r2, -1.0f, 1.0f));
+
+                float dtheta = theta2 - theta1;
+                float dphi = phi2 - phi1;
+                float angularDist = sqrt(dtheta * dtheta + dphi * dphi);
+                if ( angularDist < 0.01f )
+                    continue;
+
+                glm::vec3 normal = glm::normalize(pos1);
+                glm::vec3 tangent = glm::vec3(-sin(theta1), 0.0f, cos(theta1));
+                glm::vec3 bitangent = glm::cross(normal, tangent);
+                direction = glm::normalize((dtheta / angularDist) * tangent + (dphi / angularDist) * bitangent);
+
+                // Ensure direction is tangent to the sphere
+                float radialComponent = glm::dot(direction, normal);
+                direction -= radialComponent * normal;
+                direction = glm::normalize(direction);
+                if ( std::abs(radialComponent) > 1e-6f )
+                    std::cout << "Warning: Radial component in direction: " << radialComponent << std::endl;
+            }
+            else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
+            {
+                const float R = m_GridScale / 2.0f;
+                glm::vec2 p1(pos1.x / R, pos1.y / R);
+                glm::vec2 p2(pos2.x / R, pos2.y / R);
+                glm::vec2 diff = p2 - p1;
+                float denom1 = 1.0f - p1.x * p1.x - p1.y * p1.y;
+                float denom2 = 1.0f - p2.x * p2.x - p2.y * p2.y;
+                if ( denom1 <= 0.0f || denom2 <= 0.0f )
+                    continue;
+                glm::vec2 dir = diff / (denom1 * denom2);
+                direction = glm::normalize(glm::vec3(dir.x, dir.y, 0.0f));
+            }
+            else
+            {
+                glm::vec3 r = pos2 - pos1;
+                direction = glm::normalize(r);
+            }
+
+            float softeningLength = 1.0f;
+            float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+
+            // Compute force on shape1 due to shape2
+            float force1 = m_Gravity * shape2->m_Object.mass / (softenedDist * softenedDist);
+            shape1->m_Object.acceleration += force1 * direction;
+
+            // Compute force on shape2 due to shape1 (equal and opposite)
+            float force2 = m_Gravity * shape1->m_Object.mass / (softenedDist * softenedDist);
+            shape2->m_Object.acceleration -= force2 * direction; // Opposite direction
+
+             // Cap accelerations to prevent instability
+            float maxAccel = 10.0f;
+            if ( glm::length(shape1->m_Object.acceleration) > maxAccel )
+                shape1->m_Object.acceleration = glm::normalize(shape1->m_Object.acceleration) * maxAccel;
+            if ( glm::length(shape2->m_Object.acceleration) > maxAccel )
+                shape2->m_Object.acceleration = glm::normalize(shape2->m_Object.acceleration) * maxAccel;
+
         }
+    }
+
+    // Step 2: Update positions and velocities for all objects
+    for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
+    {
+        auto& shape = m_MassiveObjects[i];
+        m_Geometry->updatePosition(shape->m_Object, deltaTime, m_GridScale / 2.0f);
     }
 
     // Update positions using the geometry's rules
@@ -961,6 +1154,7 @@ void GridRenderer::renderCameraControls()
     ImGui::DragFloat("Pan Speed", &m_Camera.panSpeed, 0.01f, 0.01f, 1.0f, "%.2f");
     ImGui::DragFloat("Gravity Strength", &m_Gravity, 0.01f, 0.01f, 1.5f, "%.2f");
     ImGui::DragFloat("Time Step", &m_TimeStep, 0.001f, 0.001f, 0.1f, "%.3f");
+    ImGui::SliderFloat("Velocity Angle", &m_VelocityAngle, 0.0f, 90.0f, "%.1f");
 
     ImGui::Text("Kinetic Energy: %.3f", m_KineticEnergy);
     ImGui::Text("Potential Energy: %.3f", m_PotentialEnergy);
@@ -1083,11 +1277,12 @@ void GridRenderer::renderCameraControls()
             glm::vec3 pos1 = m_MassiveObjects[1]->m_Object.modelMatrix[3];
             glm::vec3 r_vec = pos1 - pos0;
 
-            glm::vec3 tangent;
+            glm::vec3 tangent, bitangent;
             if ( m_CurrentGeometryType == GeometryType::Flat )
             {
                 // In flat geometry, use the x-y plane tangent
                 tangent = glm::normalize(glm::vec3(-r_vec.y, r_vec.x, 0.0f));
+                bitangent = glm::normalize(glm::vec3(0.0f, -r_vec.z, r_vec.y));
             }
             else if ( m_CurrentGeometryType == GeometryType::Spherical )
             {
@@ -1109,6 +1304,12 @@ void GridRenderer::renderCameraControls()
                 m_MassiveObjects[i]->m_Object.velocity = glm::vec3(0.0f);
         }
     }
+
+    // if ( ImGui::Button("Add Object") ) {
+    //     auto newShape = std::make_shared<Shape>(m_GridScale, m_GridSize);
+    //     m_MassiveObjects.push_back(newShape);
+    //     generateGrid(); // Regenerate grid and velocities
+    // }
 
     ImGui::End();
 }

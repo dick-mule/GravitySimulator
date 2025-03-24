@@ -69,37 +69,112 @@ static std::string vecToString(const glm::vec3& vec)
 
 void FlatGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<glm::vec3>& massivePositions,
-    const std::vector<float>& masses,
+    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
     float G,
     float maxDisplacement,
     float minDistSquared,
     float softeningLength)
 {
-    // Reset vertices to base positions
+    // // Reset vertices to base positions
     std::vector<Vertex> baseVertices(0);
     std::vector<uint32_t> dummyIndices(0);
     generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale); // Match m_GridSize and m_GridScale
-    for ( Vertex& vertex : baseVertices )
+
+    // Compute the center of mass and relative velocity for ripple effect
+    glm::vec3 centerOfMass(0.0f);
+    float totalMass = 0.0f;
+    for ( auto& shape : massiveObjects )
     {
-        float totalDisplacement = 0.0f;
-        for ( size_t k = 0; k < massivePositions.size(); ++k )
+        float mass = shape->m_Object.mass;
+        if ( mass <= 0.0f )
+            continue;
+        centerOfMass += mass * glm::vec3(shape->m_Object.modelMatrix[3]);
+        totalMass += mass;
+    }
+    if ( totalMass > 0.0f )
+        centerOfMass /= totalMass;
+
+    // Estimate orbital frequency for ripple effect (if two masses)
+    float orbitalFrequency = 0.0f;
+    if ( massiveObjects.size() == 2 )
+    {
+        const glm::vec3 pos1 = massiveObjects[0]->m_Object.modelMatrix[3];
+        const glm::vec3 pos2 = massiveObjects[0]->m_Object.modelMatrix[3];
+        const float dist = computeDistance(pos1, pos2);
+        if ( dist > 0.01f )
         {
-            if ( masses[k] <= 0.0f )
-                continue;
-            float distSquared = glm::length2(vertex.position - massivePositions[k]);
-            if ( distSquared < minDistSquared )
-                distSquared = minDistSquared;
-            const float softenedDist = distSquared + softeningLength * softeningLength;
-            const float displacement = G * masses[k] / softenedDist;
-            totalDisplacement += displacement;
+            const float mu = G * (massiveObjects[0]->m_Object.mass + massiveObjects[1]->m_Object.mass);
+            orbitalFrequency = sqrt(mu / (dist * dist * dist)); // Kepler's third law approximation
         }
-        totalDisplacement = std::min(totalDisplacement, maxDisplacement);
-        vertex.position.y -= totalDisplacement;
+    }
+
+    // Current time for ripple animation
+    static float time = 0.0f;
+    time += 0.016f; // Assuming ~60 FPS, adjust based on actual deltaTime
+
+    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    {
+        Vertex& vertex = baseVertices[v];
+        // Compute gravitational potential at the vertex
+        float potential = 0.0f;
+        for (size_t i = 0; i < massiveObjects.size(); ++i)
+        {
+            auto& obj = massiveObjects[i];
+            const float mass = obj->m_Object.mass;
+            if ( mass <= 0.0f )
+                continue;
+            const float dist = computeDistance(vertex.position, obj->m_Object.modelMatrix[3]);
+            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            potential -= mass / softenedDist; // Gravitational potential
+        }
+
+        // Base displacement from potential
+        constexpr float warpStrength = 1.0f;
+        float displacement = -potential * warpStrength; // Negative potential -> downward displacement
+
+        // Add ripple effect
+        if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
+        {
+            glm::vec3 p = vertex.position;
+            glm::vec3 a = massiveObjects[0]->m_Object.modelMatrix[3];
+            glm::vec3 b = massiveObjects[0]->m_Object.modelMatrix[3];
+            glm::vec3 ab = b - a;
+            glm::vec3 ap = p - a;
+            float abLengthSquared = glm::dot(ab, ab);
+            if ( abLengthSquared < 1e-6f )
+                continue;
+
+            float t = glm::dot(ap, ab) / abLengthSquared;
+            t = glm::clamp(t, 0.0f, 1.0f);
+            glm::vec3 closestPoint = a + t * ab;
+            float distToLine = computeDistance(vertex.position, closestPoint);
+
+            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f);
+            float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
+            displacement += rippleAmplitude * sin(ripplePhase);
+        }
+
+        // Cap the displacement
+        displacement = std::min(displacement, maxDisplacement);
+        displacement = std::max(displacement, -maxDisplacement);
+
+        // Apply displacement along the z-axis
+        vertex.position.y -= displacement; // Positive potential -> upward, negative -> downward
+
+        // Update normal after warping (approximate normal for flat geometry)
+        vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Simplified for flat geometry
     }
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
-        vertices[i].position = baseVertices[i].position;
+        vertices[i] = baseVertices[i];
+
+    // Log average displacement for debugging
+    // float avgDisplacement = 0.0f;
+    // for ( const auto& vertex : vertices )
+    //     avgDisplacement += vertex.position.z;
+
+    // avgDisplacement /= vertices.size();
+    // std::cout << "Average grid displacement: " << avgDisplacement << std::endl;
 }
 
 void SphericalGeometry::generateGrid(
@@ -172,43 +247,88 @@ void SphericalGeometry::generateGrid(
 
 float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
 {
-    const float R = glm::length(pos1);
-    return R * acos(glm::dot(glm::normalize(pos1), glm::normalize(pos2)));
+    float r1 = glm::length(pos1);
+    float r2 = glm::length(pos2);
+    if ( r1 < 0.01f || r2 < 0.01f )
+    {
+        // std::cout << "Warning: Small radius in computeDistance - r1: " << r1 << ", r2: " << r2 << std::endl;
+        return 0.01f;
+    }
+
+    const float theta1 = atan2(pos1.z, pos1.x);
+    const float phi1 = acos(glm::clamp(pos1.y / r1, -1.0f, 1.0f));
+    const float theta2 = atan2(pos2.z, pos2.x);
+    const float phi2 = acos(glm::clamp(pos2.y / r2, -1.0f, 1.0f));
+
+    const float dtheta = theta2 - theta1;
+    const float dphi = phi2 - phi1;
+    float angularDist = sqrt(dtheta * dtheta + dphi * dphi);
+    if ( angularDist < 0.01f )
+    {
+        // std::cout << "Warning: Small angular distance - dtheta: " << dtheta << ", dphi: " << dphi << ", angularDist: " << angularDist << std::endl;
+        angularDist = 0.01f;
+    }
+
+    const float dist = angularDist * (m_GridScale / 2.0f);
+    // std::cout << "Computed distance: " << dist << std::endl;
+    return dist;
 }
 
 void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radius) const
 {
-    glm::vec3 pos = obj.modelMatrix[3];
-    float theta = acos(pos.z / radius);
-    float phi = atan2(pos.y, pos.x);
+    const float maxStep = 0.005f; // Reduce step size for better accuracy
+    int steps = static_cast<int>(std::ceil(deltaTime / maxStep));
+    float subStep = deltaTime / steps;
 
-    obj.velocity += obj.acceleration * deltaTime;
+    for ( int s = 0; s < steps; ++s )
+    {
+        glm::vec3 pos = obj.modelMatrix[3];
+        float r = glm::length(pos);
+        if ( r < 0.01f )
+        {
+            obj.modelMatrix[3] = glm::vec4(0.0f, 0.0f, radius, 1.0f);
+            obj.velocity = glm::vec3(0.0f);
+            return;
+        }
 
-    const float dTheta = obj.velocity.z / (radius * sin(theta));
-    const float dPhi = (obj.velocity.x * cos(phi) + obj.velocity.y * sin(phi)) / (radius * sin(theta));
+        // Compute the normal at the current position
+        glm::vec3 normal = glm::normalize(pos);
 
-    theta += dTheta * deltaTime;
-    phi += dPhi * deltaTime;
-    theta = glm::clamp(theta, 0.01f, glm::pi<float>() - 0.01f);
-    phi = fmod(phi, 2.0f * glm::pi<float>());
-    if ( phi < 0 )
-        phi += 2.0f * glm::pi<float>();
+        // Project velocity onto the tangent plane
+        glm::vec3 vel = obj.velocity;
+        float radialVel = glm::dot(vel, normal);
+        vel -= radialVel * normal;
 
-    pos = glm::vec3(
-        radius * sin(theta) * cos(phi),
-        radius * sin(theta) * sin(phi),
-        radius * cos(theta)
-    );
-    obj.modelMatrix[3] = glm::vec4(pos, 1.0f);
+        // Project acceleration onto the tangent plane
+        glm::vec3 accel = obj.acceleration;
+        float radialAccel = glm::dot(accel, normal);
+        accel -= radialAccel * normal;
 
-    const glm::vec3 normal = glm::normalize(pos);
-    obj.velocity -= glm::dot(obj.velocity, normal) * normal;
+        // Update velocity
+        vel += accel * subStep;
+        obj.velocity = vel;
+
+        // Project velocity again before position update
+        radialVel = glm::dot(obj.velocity, normal);
+        obj.velocity -= radialVel * normal;
+
+        // Update position
+        pos += obj.velocity * subStep;
+
+        // Strictly enforce the spherical constraint
+        pos = glm::normalize(pos) * radius;
+        obj.modelMatrix[3] = glm::vec4(pos, 1.0f);
+
+        // Recompute normal and project velocity again
+        normal = glm::normalize(pos);
+        radialVel = glm::dot(obj.velocity, normal);
+        obj.velocity -= radialVel * normal;
+    }
 }
 
 void SphericalGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<glm::vec3>& massivePositions,
-    const std::vector<float>& masses,
+    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
     float G,
     float maxDisplacement,
     float minDistSquared,
@@ -217,28 +337,82 @@ void SphericalGeometry::warpGrid(
     std::vector<Vertex> baseVertices;
     std::vector<uint32_t> dummyIndices;
     generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
-    const float R = glm::length(vertices[0].position);
-    for ( Vertex& vertex : baseVertices )
+
+    glm::vec3 centerOfMass(0.0f);
+    float totalMass = 0.0f;
+    for ( const auto& obj : massiveObjects )
     {
-        const glm::vec3 normal = glm::normalize(vertex.position);
-        float totalDisplacement = 0.0f;
-        for ( size_t k = 0; k < massivePositions.size(); ++k )
+        float mass = obj->m_Object.mass;
+        if ( mass <= 0.0f )
+            continue;
+        centerOfMass += mass * glm::vec3(obj->m_Object.modelMatrix[3]);
+        totalMass += mass;
+    }
+    if ( totalMass > 0.0f )
+        centerOfMass /= totalMass;
+
+    float orbitalFrequency = 0.0f;
+    if ( massiveObjects.size() == 2 )
+    {
+        glm::vec3 pos1 = massiveObjects[0]->m_Object.modelMatrix[3];
+        glm::vec3 pos2 = massiveObjects[1]->m_Object.modelMatrix[3];
+        const float dist = computeDistance(pos1, pos2);
+        if ( dist > 0.01f )
         {
-            if ( masses[k] <= 0.0f )
-                continue;
-            float dist = R * acos(glm::dot(normal, glm::normalize(massivePositions[k])));
-            if ( dist * dist < minDistSquared )
-                dist = sqrt(minDistSquared);
-            const float softenedDist = dist * dist + softeningLength * softeningLength;
-            const float displacement = G * masses[k] / softenedDist;
-            totalDisplacement += displacement;
+            float mu = G * (massiveObjects[0]->m_Object.mass + massiveObjects[1]->m_Object.mass);
+            orbitalFrequency = sqrt(mu / (dist * dist * dist));
         }
-        totalDisplacement = std::min(totalDisplacement, maxDisplacement);
-        vertex.position = normal * (R - totalDisplacement);
     }
 
-    for (size_t i = 0; i < baseVertices.size(); ++i)
-        vertices[i].position = baseVertices[i].position;
+    static float time = 0.0f;
+    time += 0.016f;
+
+    for ( Vertex& vertex : baseVertices )
+    {
+        float potential = 0.0f;
+        for ( const auto& obj : massiveObjects )
+        {
+            float mass = obj->m_Object.mass;
+            if ( mass <= 0.0f )
+                continue;
+            float dist = computeDistance(vertex.position, obj->m_Object.modelMatrix[3]);
+            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            potential -= mass / softenedDist;
+        }
+
+        constexpr float warpStrength = 1.0f;
+        float displacement = -potential * warpStrength;
+
+        if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
+        {
+            glm::vec3 p = vertex.position;
+            glm::vec3 a = massiveObjects[0]->m_Object.modelMatrix[3];
+            glm::vec3 b = massiveObjects[1]->m_Object.modelMatrix[3];
+            glm::vec3 ab = b - a;
+            glm::vec3 ap = p - a;
+            float abLengthSquared = glm::dot(ab, ab);
+            if ( abLengthSquared < 1e-6f )
+                continue;
+
+            float t = glm::dot(ap, ab) / abLengthSquared;
+            t = glm::clamp(t, 0.0f, 1.0f);
+            glm::vec3 closestPoint = a + t * ab;
+            float distToLine = computeDistance(vertex.position, closestPoint);
+
+            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f);
+            float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
+            displacement += rippleAmplitude * sin(ripplePhase);
+        }
+
+        displacement = std::min(displacement, maxDisplacement);
+        displacement = std::max(displacement, -maxDisplacement);
+
+        vertex.position -= displacement * glm::normalize(vertex.position); // Displace along normal (outward for negative potential)
+        vertex.normal = glm::normalize(vertex.position);
+    }
+
+    for ( size_t i = 0; i < baseVertices.size(); ++i )
+        vertices[i] = baseVertices[i];
 }
 
 void HyperbolicGeometry::generateGrid(
@@ -294,13 +468,34 @@ void HyperbolicGeometry::generateGrid(
 
 float HyperbolicGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
 {
-    const float R = 10.0f;
+    const float R = m_GridScale / 2.0f;
     const float x1 = pos1.x / R, y1 = pos1.y / R;
     const float x2 = pos2.x / R, y2 = pos2.y / R;
-    const float d = 2.0f * ((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) /
-              ((1.0f - x1 * x1 - y1 * y1) * (1.0f - x2 * x2 - y2 * y2));
-    return R * acosh(1.0f + d);
-}
+
+    const float len1 = x1 * x1 + y1 * y1;
+    const float len2 = x2 * x2 + y2 * y2;
+    if ( len1 > 0.99f || len2 > 0.99f )
+    {
+        // std::cout << "Warning: Positions outside Poincaré disk - len1: " << len1 << ", len2: " << len2 << std::endl;
+        return std::numeric_limits<float>::max();
+    }
+
+    const float denom1 = 1.0f - len1;
+    const float denom2 = 1.0f - len2;
+    if ( denom1 <= 0.0f || denom2 <= 0.0f )
+    {
+        // std::cout << "Warning: Invalid denominator in hyperbolic distance - denom1: " << denom1 << ", denom2: " << denom2 << std::endl;
+        return std::numeric_limits<float>::max();
+    }
+
+    const float d = 2.0f * ((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) / (denom1 * denom2);
+    float result = R * acosh(std::max(1.0f, 1.0f + d));
+    if ( !std::isfinite(result) )
+    {
+        // std::cout << "Warning: Hyperbolic distance computation resulted in non-finite value - d: " << d << std::endl;
+        result = std::numeric_limits<float>::max();
+    }
+    return result;}
 
 void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/) const
 {
@@ -324,8 +519,7 @@ void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*ra
 
 void HyperbolicGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<glm::vec3>& massivePositions,
-    const std::vector<float>& masses,
+    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
     float G,
     float maxDisplacement,
     float minDistSquared,
@@ -335,27 +529,109 @@ void HyperbolicGeometry::warpGrid(
     std::vector<uint32_t> dummyIndices;
     generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
 
-    constexpr float R = 10.0f;
+    glm::vec3 centerOfMass(0.0f);
+    float totalMass = 0.0f;
+    const float R = m_GridScale / 2.0f; // Radius of the Poincaré disk (50.0f)
+    const float k = m_GridScale; // Scale factor for z = (x^2 - y^2) / k (100.0f)
+    for ( const auto& obj : massiveObjects )
+    {
+        float mass = obj->m_Object.mass;
+        if ( mass <= 0.0f )
+            continue;
+        centerOfMass += mass * glm::vec3(obj->m_Object.modelMatrix[3]);
+        totalMass += mass;
+    }
+    if ( totalMass > 0.0f )
+        centerOfMass /= totalMass;
+
+    float orbitalFrequency = 0.0f;
+    if ( massiveObjects.size() == 2 )
+    {
+        const glm::vec3 pos1 = massiveObjects[0]->m_Object.modelMatrix[3];
+        const glm::vec3 pos2 = massiveObjects[1]->m_Object.modelMatrix[3];
+        const float dist = computeDistance(pos1, pos2);
+        if ( dist > 0.01f )
+        {
+            float mu = G * (massiveObjects[0]->m_Object.mass + massiveObjects[1]->m_Object.mass);
+            orbitalFrequency = sqrt(mu / (dist * dist * dist));
+        }
+    }
+
+    static float time = 0.0f;
+    time += 0.016f;
+
     for ( Vertex& vertex : baseVertices )
     {
-        float totalDisplacement = 0.0f;
-        for ( size_t k = 0; k < massivePositions.size(); ++k )
+        // Compute damping factor based on distance from center
+        const float rSquared = vertex.position.x * vertex.position.x + vertex.position.y * vertex.position.y;
+        float damping = 1.0f - rSquared / (R * R);
+        if ( damping < 0.0f )
+            damping = 0.0f;
+
+        float potential = 0.0f;
+        for ( const auto& obj : massiveObjects )
         {
-            if ( masses[k] <= 0.0f )
+            const float mass = obj->m_Object.mass;
+            if ( mass <= 0.0f )
                 continue;
-            float dist = computeDistance(vertex.position, massivePositions[k]);
-            if ( dist * dist < minDistSquared )
-                dist = sqrt(minDistSquared);
-            const float softenedDist = dist * dist + softeningLength * softeningLength;
-            const float displacement = G * masses[k] / softenedDist;
-            totalDisplacement += displacement;
+
+            const float dist = computeDistance(vertex.position, obj->m_Object.modelMatrix[3]);
+            if ( dist >= std::numeric_limits<float>::max() )
+                continue; // Skip if distance computation failed
+            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            potential -= mass / softenedDist;
         }
-        totalDisplacement = std::min(totalDisplacement, maxDisplacement);
-        vertex.position.z -= totalDisplacement;
+
+        constexpr float warpStrength = 1.0f;
+        float displacement = -potential * warpStrength;
+        // Add ripple effect emanating from the line between the two masses
+        if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
+        {
+            const glm::vec3 pos1 = massiveObjects[0]->m_Object.modelMatrix[3];
+            const glm::vec3 pos2 = massiveObjects[1]->m_Object.modelMatrix[3];
+            // Compute the shortest distance from the vertex to the line segment between pos1 and pos2
+            glm::vec3 p = vertex.position;
+            glm::vec3 a = pos1;
+            glm::vec3 b = pos2;
+            glm::vec3 ab = b - a;
+            glm::vec3 ap = p - a;
+            float abLengthSquared = glm::dot(ab, ab);
+            if ( abLengthSquared < 1e-6f )
+                continue; // Avoid division by zero
+
+            float t = glm::dot(ap, ab) / abLengthSquared;
+            t = glm::clamp(t, 0.0f, 1.0f); // Clamp to the line segment
+            glm::vec3 closestPoint = a + t * ab;
+            float distToLine = computeDistance(vertex.position, closestPoint);
+            if ( distToLine >= std::numeric_limits<float>::max() )
+                continue;
+
+            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f) * damping;
+            float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
+            displacement += rippleAmplitude * sin(ripplePhase);
+        }
+
+        displacement = std::min(displacement, maxDisplacement);
+        displacement = std::max(displacement, -maxDisplacement);
+
+        // Compute the normal to the hyperbolic surface z = (x^2 - y^2) / k
+        float x = vertex.position.x;
+        float y = vertex.position.y;
+        glm::vec3 normal(-2.0f * x / k, 2.0f * y / k, 1.0f);
+        normal = glm::normalize(normal);
+
+        // Displace along the normal
+        vertex.position -= displacement * normal;
+
+        // Update the normal after displacement
+        x = vertex.position.x;
+        y = vertex.position.y;
+        normal = glm::vec3(-2.0f * x / k, 2.0f * y / k, 1.0f);
+        vertex.normal = glm::normalize(normal);
     }
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
-        vertices[i].position = baseVertices[i].position;
+        vertices[i] = baseVertices[i];
 }
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale)
@@ -398,7 +674,11 @@ glm::vec3 convertCoordinates(
                 );
             }
             case GeometryType::Hyperbolic:
-                return coordinates;
+            {
+                const float k = radius * 2.0f;
+                const float z = (coordinates.x * coordinates.x - coordinates.y * coordinates.y) / k;
+                return glm::vec3(coordinates.x, coordinates.y, z);
+            }
             default:
                 return coordinates;
         }

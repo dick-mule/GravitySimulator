@@ -19,7 +19,7 @@ public:
     virtual void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) = 0;
     virtual float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const = 0;
     virtual void updatePosition(Object& obj, float deltaTime, float radius) const = 0;
-    virtual void warpGrid(std::vector<Vertex>& vertices, const std::vector<glm::vec3>& massivePositions, const std::vector<float>& masses, float G, float maxDisplacement, float minDistSquared, float softeningLength) = 0;
+    virtual void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) = 0;
     void setGridParams(int grid_size, float grid_scale) { m_GridSize = grid_size; m_GridScale = grid_scale; }
 };
 
@@ -32,7 +32,7 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<glm::vec3>& massivePositions, const std::vector<float>& masses, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
 class SphericalGeometry : public Geometry
@@ -44,7 +44,7 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<glm::vec3>& massivePositions, const std::vector<float>& masses, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
 class HyperbolicGeometry : public Geometry
@@ -56,7 +56,7 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<glm::vec3>& massivePositions, const std::vector<float>& masses, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale);
