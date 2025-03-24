@@ -1,0 +1,4 @@
+/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles/Shaders.dir
+/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles/GravitySimulator.dir
+/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles/rebuild_cache.dir

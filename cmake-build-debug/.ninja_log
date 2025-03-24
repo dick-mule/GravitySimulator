@@ -1,0 +1,20 @@
+# ninja log v6
+6	1067	1742781063321151093	CMakeFiles/GravitySimulator.dir/src/Types.cpp.o	c13ecf31c164235
+7	1109	1742781063321249134	CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o	7c26107045eb2064
+7	391	1742627656601847525	CMakeFiles/GravitySimulator.dir/src/imgui/imgui_draw.cpp.o	a593c2ad53b8e155
+5	1288	1742781201679218679	CMakeFiles/GravitySimulator.dir/src/GridRenderer.cpp.o	93c43229b7aa4319
+4	67	1742669586681197854	/Users/richardmule/CLionProjects/GravitySim/cmake-build-debug/grid.frag.spv	be253218da9a1ab4
+4	67	1742669586681197854	grid.frag.spv	be253218da9a1ab4
+8	275	1742627656602536983	CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_vulkan.cpp.o	e2765cf428d6e6e0
+0	53	1742781994473051850	build.ninja	6cc0c8c8ebaf97cb
+7	329	1742627656601978066	CMakeFiles/GravitySimulator.dir/src/imgui/imgui_tables.cpp.o	e21f5477afd0e68a
+7	419	1742627656602215441	CMakeFiles/GravitySimulator.dir/src/imgui/imgui_demo.cpp.o	88ac8f0f7be6d4b5
+5	995	1742669937235823170	CMakeFiles/GravitySimulator.dir/src/ImGuiHandler.cpp.o	9ecbfc1057c6e1cb
+8	479	1742627656602376983	CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_glfw.cpp.o	683c8a3d1c7494d7
+16	1170	1742751912089357538	CMakeFiles/GravitySimulator.dir/src/main.cpp.o	d013d521f097d154
+5	1330	1742781142210943428	CMakeFiles/GravitySimulator.dir/src/VulkanApp.cpp.o	8c90ffa944677447
+7	567	1742627656601673816	CMakeFiles/GravitySimulator.dir/src/imgui/imgui.cpp.o	b22b82a3bd0dcd79
+16	91	1742710774959834990	/Users/richardmule/CLionProjects/GravitySim/cmake-build-debug/grid.vert.spv	1360fb5952f17fed
+7	503	1742627656602096775	CMakeFiles/GravitySimulator.dir/src/imgui/imgui_widgets.cpp.o	1db0e3315b75b62
+16	91	1742710774959834990	grid.vert.spv	1360fb5952f17fed
+1288	1322	1742781202961419025	GravitySimulator	7a0f8d11536e3c4d
