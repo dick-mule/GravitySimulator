@@ -81,7 +81,7 @@ public:
 class Cube final : public Shape
 {
 protected:
-    float m_CubeSize = 0.75f;
+    float m_CubeSize = 1.25f;
     std::string m_Name = "Cube";
 
 public:
@@ -94,7 +94,7 @@ public:
 class Sphere final : public Shape
 {
 protected:
-    float m_Radius = 0.5f;
+    float m_Radius = 1.0f;
     int m_Stacks = 20;
     int m_Slices = 20;
     std::string m_Name = "Sphere";

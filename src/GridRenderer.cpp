@@ -76,9 +76,14 @@ GridRenderer::GridRenderer(
         og_coords2,
         GeometryType::Flat,
         geometryType,
-        m_GridSize / 2);
+        static_cast<float>(m_GridSize) / 2);
     sphereObj.modelMatrix = glm::translate(glm::mat4(1.0f), converted_coords2);
     m_MassiveObjects.push_back(std::make_unique<Sphere>(sphereObj));
+
+    // Initialize trails
+    m_Trails.resize(m_MassiveObjects.size());
+    for ( auto& trail : m_Trails )
+        trail.positions.clear();
 }
 
 GridRenderer::~GridRenderer()
@@ -93,6 +98,14 @@ GridRenderer::~GridRenderer()
         m_Device.destroyBuffer(m_VertexBuffer);
     if ( m_VertexBufferMemory )
         m_Device.freeMemory(m_VertexBufferMemory);
+    if ( m_TrailVertexBuffer )
+        m_Device.destroyBuffer(m_TrailVertexBuffer);
+    if ( m_TrailVertexBufferMemory )
+        m_Device.freeMemory(m_TrailVertexBufferMemory);
+    if ( m_TrailIndexBuffer )
+        m_Device.destroyBuffer(m_TrailIndexBuffer);
+    if ( m_TrailIndexBufferMemory )
+        m_Device.freeMemory(m_TrailIndexBufferMemory);
     if ( m_VertexBuffer )
         m_Device.destroyBuffer(m_IndexBuffer);
     if ( m_IndexBufferMemory )
@@ -539,6 +552,105 @@ void GridRenderer::updateGeometry(GeometryType type)
 
 }
 
+void GridRenderer::updateTrails()
+{
+    m_TrailVertices.clear();
+    m_TrailIndices.clear();
+
+    uint32_t vertexOffset = 0;
+    for ( size_t i = 0; i < m_Trails.size(); ++i )
+    {
+        const auto& [positions] = m_Trails[i];
+        // const auto& shape = m_MassiveObjects[i];
+        const glm::vec3 color = i == 0 ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 1.0f);
+
+        // Add vertices
+        for ( const auto& pos : positions )
+        {
+            Vertex vertex{};
+            vertex.position = pos;
+            vertex.color = color;
+            vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            m_TrailVertices.push_back(vertex);
+        }
+
+        // Add indices for a line strip
+        for ( size_t j = 0; j < positions.size() - 1; ++j )
+        {
+            m_TrailIndices.push_back(vertexOffset + j);
+            m_TrailIndices.push_back(vertexOffset + j + 1);
+        }
+        vertexOffset += static_cast<uint32_t>(positions.size());
+    }
+
+    // Update trail vertex buffer
+    if ( !m_TrailVertices.empty() && !m_TrailIndices.empty() )
+    {
+        const vk::DeviceSize bufferSize = sizeof(m_TrailVertices[0]) * m_TrailVertices.size();
+        const vk::Buffer stagingBuffer = createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc);
+        const vk::DeviceMemory stagingBufferMemory = allocateBufferMemory(
+            stagingBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_Device.bindBufferMemory(stagingBuffer, stagingBufferMemory, 0);
+
+        void* data;
+        auto _ = m_Device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
+        memcpy(data, m_TrailVertices.data(), bufferSize);
+        m_Device.unmapMemory(stagingBufferMemory);
+
+        static vk::DeviceSize lastVertexBufferSize = 0;
+        if ( m_TrailVertexBuffer && bufferSize != lastVertexBufferSize )
+        {
+            m_Device.destroyBuffer(m_TrailVertexBuffer);
+            m_Device.freeMemory(m_TrailVertexBufferMemory);
+            m_TrailVertexBuffer = nullptr;
+            m_TrailVertexBufferMemory = nullptr;
+        }
+        if ( !m_TrailVertexBuffer )
+        {
+            m_TrailVertexBuffer = createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer);
+            m_TrailVertexBufferMemory = allocateBufferMemory(m_TrailVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            m_Device.bindBufferMemory(m_TrailVertexBuffer, m_TrailVertexBufferMemory, 0);
+        }
+        lastVertexBufferSize = bufferSize;
+        copyBuffer(stagingBuffer, m_TrailVertexBuffer, bufferSize);
+
+        m_Device.destroyBuffer(stagingBuffer);
+        m_Device.freeMemory(stagingBufferMemory);
+
+        const vk::DeviceSize indexBufferSize = sizeof(m_TrailIndices[0]) * m_TrailIndices.size();
+        const vk::Buffer stagingIndexBuffer = createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc);
+        const vk::DeviceMemory stagingIndexBufferMemory = allocateBufferMemory(
+            stagingIndexBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_Device.bindBufferMemory(stagingIndexBuffer, stagingIndexBufferMemory, 0);
+
+        _ = m_Device.mapMemory(stagingIndexBufferMemory, 0, indexBufferSize, {}, &data);
+        memcpy(data, m_TrailIndices.data(), indexBufferSize);
+        m_Device.unmapMemory(stagingIndexBufferMemory);
+
+        static vk::DeviceSize lastIndexBufferSize = 0;
+        if ( m_TrailIndexBuffer && indexBufferSize != lastIndexBufferSize )
+        {
+            m_Device.destroyBuffer(m_TrailIndexBuffer);
+            m_Device.freeMemory(m_TrailIndexBufferMemory);
+            m_TrailIndexBuffer = nullptr;
+            m_TrailIndexBufferMemory = nullptr;
+        }
+        if ( !m_TrailIndexBuffer )
+        {
+            m_TrailIndexBuffer = createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer);
+            m_TrailIndexBufferMemory = allocateBufferMemory(m_TrailIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+            m_Device.bindBufferMemory(m_TrailIndexBuffer, m_TrailIndexBufferMemory, 0);
+        }
+        lastIndexBufferSize = indexBufferSize;
+        copyBuffer(stagingIndexBuffer, m_TrailIndexBuffer, indexBufferSize);
+
+        m_Device.destroyBuffer(stagingIndexBuffer);
+        m_Device.freeMemory(stagingIndexBufferMemory);
+    }
+}
+
 
 void GridRenderer::draw(vk::CommandBuffer commandBuffer) const
 {
@@ -583,6 +695,26 @@ void GridRenderer::draw(vk::CommandBuffer commandBuffer) const
         pc.model = obj.modelMatrix;
         commandBuffer.pushConstants(m_PipelineLayout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(PushConstants), &pc);
         commandBuffer.drawIndexed(obj.indexCount, 1, obj.indexOffset, 0, 0);
+    }
+
+    if ( !m_TrailVertices.empty() && !m_TrailIndices.empty() )
+    {
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_GraphicsPipeline); // Use the line pipeline
+        commandBuffer.bindVertexBuffers(0, 1, &m_TrailVertexBuffer, offsets);
+        commandBuffer.bindIndexBuffer(m_TrailIndexBuffer, 0, vk::IndexType::eUint32);
+
+        PushConstants trail_constants{};
+        trail_constants.view = m_Camera.getViewMatrix();
+        trail_constants.projection = glm::perspective(
+            glm::radians(m_Camera.fov),
+            static_cast<float>(m_SwapchainExtent.width) / static_cast<float>(m_SwapchainExtent.height),
+            m_Camera.nearPlane, m_Camera.farPlane
+        );
+        trail_constants.projection[1][1] *= -1; // Flip Y-axis for Vulkan
+        trail_constants.model = glm::mat4(1.0f); // Trails are in world space
+        commandBuffer.pushConstants(m_PipelineLayout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(PushConstants), &trail_constants);
+
+        commandBuffer.drawIndexed(static_cast<uint32_t>(m_TrailIndices.size()), 1, 0, 0, 0);
     }
 }
 
@@ -698,9 +830,9 @@ void GridRenderer::updateGrid()
     m_Device.freeMemory(stagingBufferMemory);
 }
 
-void GridRenderer::updateSimulation(float deltaTime) const
+void GridRenderer::updateSimulation(float deltaTime)
 {
-    deltaTime = std::min(deltaTime, 0.05f);
+    deltaTime = std::min(deltaTime, m_TimeStep);
 
     // Reset accelerations
     for ( auto& shape : m_MassiveObjects )
@@ -732,7 +864,9 @@ void GridRenderer::updateSimulation(float deltaTime) const
             if ( dist < 0.01f )
                 dist = 0.01f;
 
-            const float forceMagnitude = m_Gravity * obj1.mass * obj2.mass / (dist * dist);
+            constexpr float softeningLength = 1.0f; // Same as in warpGrid
+            float softenedDistSquared = dist * dist + softeningLength * softeningLength;
+            const float forceMagnitude = m_Gravity * obj1.mass * obj2.mass / softenedDistSquared;
             const glm::vec3 forceDir = glm::normalize(r);
 
             const glm::vec3 force = forceDir * forceMagnitude;
@@ -745,14 +879,40 @@ void GridRenderer::updateSimulation(float deltaTime) const
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         auto& shape = m_MassiveObjects[i];
-        // Add damping to prevent runaway motion
-        shape->m_Object.velocity *= 0.999f;
         m_Geometry->updatePosition(shape->m_Object, deltaTime, m_GridScale / 2.0f);
 
-        // Debug position
-        // glm::vec3 pos = shape->m_Object.modelMatrix[3];
-        // std::cout << "Shape " << i << " Position: (" << pos.x << ", " << pos.y << ", " << pos.z << ")\n";
+        // Add position to trail
+        auto& [positions] = m_Trails[i];
+        positions.push_back(shape->m_Object.modelMatrix[3]);
+        if ( positions.size() > Trail::maxPoints )
+            positions.pop_front();
     }
+
+    // Compute energy
+    m_KineticEnergy = 0.0f;
+    m_PotentialEnergy = 0.0f;
+    for ( const auto& shape : m_MassiveObjects )
+    {
+        // Kinetic energy: KE = 0.5 * m * v^2
+        const float speedSquared = glm::length2(shape->m_Object.velocity);
+        m_KineticEnergy += 0.5f * shape->m_Object.mass * speedSquared;
+    }
+
+    for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
+    {
+        for ( size_t j = i + 1; j < m_MassiveObjects.size(); ++j )
+        {
+            const glm::vec3 pos1 = m_MassiveObjects[i]->m_Object.modelMatrix[3];
+            const glm::vec3 pos2 = m_MassiveObjects[j]->m_Object.modelMatrix[3];
+            float dist = m_Geometry->computeDistance(pos1, pos2);
+            constexpr float softeningLength = 1.0f;
+            float softenedDist = std::sqrt(dist * dist + softeningLength * softeningLength);
+            // Potential energy: PE = -G * m1 * m2 / r
+            m_PotentialEnergy -= m_Gravity * m_MassiveObjects[i]->m_Object.mass * m_MassiveObjects[j]->m_Object.mass / softenedDist;
+        }
+    }
+    m_TotalEnergy = m_KineticEnergy + m_PotentialEnergy;
+    updateTrails();
 }
 
 void GridRenderer::renderCameraControls()
@@ -790,6 +950,11 @@ void GridRenderer::renderCameraControls()
     ImGui::DragFloat("Zoom Speed", &m_Camera.zoomSpeed, 0.1f, 0.1f, 5.0f, "%.1f");
     ImGui::DragFloat("Pan Speed", &m_Camera.panSpeed, 0.01f, 0.01f, 1.0f, "%.2f");
     ImGui::DragFloat("Gravity Strength", &m_Gravity, 0.01f, 0.01f, 1.5f, "%.2f");
+    ImGui::DragFloat("Time Step", &m_TimeStep, 0.001f, 0.001f, 0.1f, "%.3f");
+
+    ImGui::Text("Kinetic Energy: %.3f", m_KineticEnergy);
+    ImGui::Text("Potential Energy: %.3f", m_PotentialEnergy);
+    ImGui::Text("Total Energy: %.3f", m_TotalEnergy);
 
     if ( ImGui::Button("Reset Camera") )
     {

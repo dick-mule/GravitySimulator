@@ -30,7 +30,7 @@ public:
     void draw(vk::CommandBuffer commandBuffer) const;
     void updateCamera();
     void updateGrid(); // New method to warp grid
-    void updateSimulation(float deltaTime) const;
+    void updateSimulation(float deltaTime);
     void renderCameraControls();
     void createDepthResources();
     vk::Format getDepthFormat() const { return m_DepthFormat; }
@@ -68,6 +68,22 @@ private:
     float m_Gravity = 0.2f;
     int m_GridSize = 200;
     float m_GridScale = 100.0f;
+    float m_TotalEnergy = 0.0f;
+    float m_KineticEnergy = 0.0f;
+    float m_PotentialEnergy = 0.0f;
+    float m_TimeStep = 0.05f;
+
+    struct Trail {
+        std::deque<glm::vec3> positions;
+        static constexpr size_t maxPoints = 100; // Number of points in the trail
+    };
+    std::vector<Trail> m_Trails; // One trail per object
+    std::vector<Vertex> m_TrailVertices;
+    std::vector<uint32_t> m_TrailIndices;
+    vk::Buffer m_TrailVertexBuffer;
+    vk::DeviceMemory m_TrailVertexBufferMemory;
+    vk::Buffer m_TrailIndexBuffer;
+    vk::DeviceMemory m_TrailIndexBufferMemory;
 
     void generateGrid();
     void createVertexBuffer();
@@ -75,6 +91,7 @@ private:
     void createGraphicsPipeline();
     void updateGeometry(GeometryType type);
     void addShape(const std::shared_ptr<Shape>& shape) { m_MassiveObjects.push_back(shape); }
+    void updateTrails();
 
     vk::Buffer createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const;
     vk::DeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
