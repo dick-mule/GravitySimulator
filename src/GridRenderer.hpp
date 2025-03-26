@@ -71,7 +71,7 @@ private:
     float m_TotalEnergy = 0.0f;
     float m_KineticEnergy = 0.0f;
     float m_PotentialEnergy = 0.0f;
-    float m_TimeStep = 0.01f;
+    float m_TimeStep = 0.05f;
     float m_VelocityAngle = 0.0f;
     float m_OrbitFactor = 1.0f;
     float m_WarpStrength = 1.0f;

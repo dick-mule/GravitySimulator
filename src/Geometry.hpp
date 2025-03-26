@@ -74,4 +74,5 @@ glm::vec3 convertVelocity(
     GeometryType end_type,
     float radius,
     float dist,
-    float mu);
+    float mu,
+    const std::shared_ptr<Geometry>& calculator = nullptr);

@@ -683,7 +683,8 @@ glm::vec3 convertVelocity(
     GeometryType end_type,
     float radius,
     float dist,
-    float mu)
+    float mu,
+    const std::shared_ptr<Geometry>& calculator)
 {
     if ( start_type == end_type )
         return oldVel;
@@ -715,14 +716,19 @@ glm::vec3 convertVelocity(
                 if ( flatDist < 0.01f )
                     flatDist = 0.01f;
 
-                const float k = radius;
                 const float theta = atan2(oldPos.z, oldPos.x);
-                const glm::vec3 hypTangent = std::abs(oldPos.z) < 0.01f ?
+                glm::vec3 hypTangent = std::abs(oldPos.z < 0.01f) && std::abs(oldPos.x) > 0.01f ?
                     glm::vec3(0, 0, 1) :
                     glm::vec3(-sin(theta), 0, cos(theta));
 
-                // float v_h = sqrt(mu / flatDist); // Circular velocity at flat distance *Deprecated*
-                return vMag * hypTangent;
+                // Preserve angular momentum: h = r * v (flat) -> v_hyp = h / r_hyp
+                float h = flatDist * vMag; // Flat angular momentum
+                float hypDist = calculator->computeDistance(oldPos, glm::vec3(0, 0, 0)); // Hyperbolic distance to origin
+                if ( hypDist < 0.01f )
+                    hypDist = 0.01f;
+                float vHyp = h / hypDist; // Adjusted velocity
+
+                return vHyp * hypTangent;
             }
             default:
                 return oldVel;
@@ -750,9 +756,24 @@ glm::vec3 convertVelocity(
         {
             case GeometryType::Flat:
             {
+                float hypDist = calculator->computeDistance(oldPos, glm::vec3(0, 0, 0));
+                if ( hypDist < 0.01f )
+                    hypDist = 0.01f;
+
+                vMag = glm::length(oldVel);
+                float h = hypDist * vMag; // Hyperbolic angular momentum
+
+                float flatDist = glm::length(glm::vec2(oldPos.x, oldPos.z));
+                if (flatDist < 0.01f) flatDist = 0.01f;
+
+                float vFlat = h / flatDist; // Adjusted velocity for flat space
+
                 float theta = atan2(oldPos.z, oldPos.x);
-                tangent = glm::vec3(-sin(theta), 0, cos(theta));
-                return vMag * tangent;
+                tangent = std::abs(oldPos.z) < 0.01f && std::abs(oldPos.x) > 0.01f ?
+                    glm::vec3(0, 0, 1) :
+                    glm::vec3(-sin(theta), 0, cos(theta));
+
+                return vFlat * tangent;
             }
             case GeometryType::Spherical:
             {

@@ -71,7 +71,7 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 1; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
@@ -542,7 +542,7 @@ void GridRenderer::updateGeometry(GeometryType type)
             glm::vec3 oldVel = obj.velocity;
 
             glm::vec3 newPos = convertCoordinates(oldPos, m_CurrentGeometryType, type, R);
-            glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu);
+            glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu, m_Geometry);
             obj.position = newPos;
             obj.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
             obj.velocity = newVel;
@@ -817,7 +817,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
