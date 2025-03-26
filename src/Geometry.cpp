@@ -358,15 +358,15 @@ void HyperbolicGeometry::generateGrid(
             // Map i, j to x, y coordinates in the range [-scale/2, scale/2]
             const float x = (static_cast<float>(i) / gridSize - 0.5f) * scale;
             const float z = (static_cast<float>(j) / gridSize - 0.5f) * scale;
-            // Hyperbolic paraboloid: z = (x^2 - y^2) / k
+            // Hyperbolic paraboloid: z = (x^2 - y^2) / k  <- not using graphics coordinates
             const float k = scale; // Adjust this to control curvature (smaller k = more pronounced saddle)
             const float y = (x * x - z * z) / k;
             vertex.position = glm::vec3(x, y, z);
             vertex.color = glm::vec3(1.0f);
 
             // Compute the normal (partial derivatives of z = (x^2 - y^2) / k)
-            const float dy_dx = (2.0f * x) / k; // ∂y/∂x = 2x/k <- Graphics adjusted
-            const float dy_dz = (-2.0f * z) / k; // ∂y/∂z = -2z/k <- Graphics adjusted
+            const float dy_dx = 2.0f * x / k; // ∂y/∂x = 2x/k <- Graphics adjusted
+            const float dy_dz = -2.0f * z / k; // ∂y/∂z = -2z/k <- Graphics adjusted
             const auto tangent_x = glm::vec3(1.0f, 0.0f, dy_dx);
             const auto tangent_y = glm::vec3(0.0f, 1.0f, dy_dz);
             vertex.normal = glm::normalize(glm::cross(tangent_y, tangent_x)); // Normal is cross product of tangents
@@ -428,18 +428,22 @@ float HyperbolicGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3
 
 void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/, bool apply_verlet_half) const
 {
+    const float R = m_GridScale / 2.0f;
     const glm::vec3 accelTerm = 0.5f * obj.acceleration * deltaTime;
     obj.velocity += accelTerm; // v(t + 0.5 * dt) or v(t + dt) incrementally
-
     if ( apply_verlet_half )
     {
         const glm::vec3 pos = obj.position;
         glm::vec2 posDisk(pos.x, pos.z);
         const glm::vec2 velDisk(obj.velocity.x, obj.velocity.z);
 
-        posDisk += velDisk * deltaTime; // x(t + dt) using v(t + 0.5 * dt)
+        float len = glm::length(posDisk) / (m_GridScale / 2.0f);
+        if ( len < 0.01f )
+            len = 0.01f;
+        const float scale = 1.0f / (1.0f - len * len);
+        posDisk += velDisk * deltaTime * scale; // x(t + dt) using v(t + 0.5 * dt)
 
-        if ( const float R = m_GridScale / 2.0f; glm::length(posDisk) > 0.99f * R )
+        if ( glm::length(posDisk) > 0.99f * R )
         {
             posDisk = glm::normalize(posDisk) * 0.99f * R;
             obj.velocity = glm::vec3(0, obj.velocity.y, 0); // Reset xz velocity
@@ -584,22 +588,15 @@ glm::vec3 convertCoordinates(
             }
             case GeometryType::Hyperbolic:
             {
-                // Assume hyperbolic plane in xy-plane, z as embedding height
-                // Map flat Euclidean distance to hyperbolic distance via Poincaré disk
-                float flatDist = glm::length(glm::vec2(coordinates.x, coordinates.y));
-                if ( flatDist < 0.01f )
-                    flatDist = 0.01f;
-
-                // Hyperbolic radius k (curvature scale, often radius-related)
-                const float k = radius; // Adjust based on your hyperbolic model
-                const float hypDist = k * tanh(flatDist / k); // Approximate hyperbolic distance
-                // Direction preserved
-                const float theta = atan2(coordinates.y, coordinates.x);
+                const float k = 2.0f * radius; // Must match grid's scale, e.g., 250
+                const float x = coordinates.x;
+                const float z = coordinates.z;
+                const float yHeight = (x * x - z * z) / k + coordinates.y; // Paraboloid height + flat y offset
 
                 return glm::vec3(
-                    hypDist * cos(theta), // x
-                    coordinates.y, // y  (recall y/z flipped because graphics)
-                    hypDist * sin(theta) // z (2D plane)
+                    x,       // Preserve flat x
+                    yHeight, // Hyperbolic paraboloid y
+                    z        // Preserve flat z
                 );
             }
             default:
@@ -649,19 +646,14 @@ glm::vec3 convertCoordinates(
         {
         case GeometryType::Flat:
         {
-            // Hyperbolic (Poincaré disk) to flat: Approximate inverse hyperbolic map
-            float hypDist = glm::length(glm::vec2(coordinates.x, coordinates.z));
-            if ( hypDist < 0.01f )
-                hypDist = 0.01f;
-
-            const float k = radius;
-            const float flatDist = k * atanh(hypDist / k); // Inverse tanh to flat distance
-            const float theta = atan2(coordinates.z, coordinates.x);
-
-                return glm::vec3(
-                flatDist * cos(theta), // x
-                coordinates.y,         // y (preserve for graphics)
-                flatDist * sin(theta)  // z
+            const float k = 2.0 * radius;
+            const float x = coordinates.x;
+            const float z = coordinates.z;
+            const float flatY = coordinates.y - (x * x - z * z) / k; // Remove paraboloid height
+            return glm::vec3(
+                x,
+                flatY,
+                z
             );
         }
         case GeometryType::Spherical:
@@ -716,19 +708,22 @@ glm::vec3 convertVelocity(
                 if ( flatDist < 0.01f )
                     flatDist = 0.01f;
 
-                const float theta = atan2(oldPos.z, oldPos.x);
-                glm::vec3 hypTangent = std::abs(oldPos.z < 0.01f) && std::abs(oldPos.x) > 0.01f ?
-                    glm::vec3(0, 0, 1) :
-                    glm::vec3(-sin(theta), 0, cos(theta));
+                // Tangent in xz-plane
+                const glm::vec2 posDisk(oldPos.x, oldPos.z);
+                const glm::vec2 radial = glm::normalize(posDisk);
+                const glm::vec2 tangentXZ(-radial.y, radial.x); // 90° CCW
+                const glm::vec3 hypTangentXZ(tangentXZ.x, 0, tangentXZ.y);
 
-                // Preserve angular momentum: h = r * v (flat) -> v_hyp = h / r_hyp
-                float h = flatDist * vMag; // Flat angular momentum
-                float hypDist = calculator->computeDistance(oldPos, glm::vec3(0, 0, 0)); // Hyperbolic distance to origin
-                if ( hypDist < 0.01f )
-                    hypDist = 0.01f;
-                float vHyp = h / hypDist; // Adjusted velocity
+                // Use flatDist (no hyperbolic scaling needed for paraboloid)
+                const float h = flatDist * vMag;
+                const float vHyp = h / flatDist; // vMag, preserving speed
 
-                return vHyp * hypTangent;
+                // Compute vy from paraboloid: y = (x^2 - z^2) / k
+                const float k = 2.0f * radius; // 500
+                const float vy = 2.0f * (oldPos.x * oldVel.x - oldPos.z * oldVel.z) / k;
+
+                // Combine xz tangential velocity with vy
+                return vHyp * hypTangentXZ + glm::vec3(0, vy, 0);
             }
             default:
                 return oldVel;
@@ -756,24 +751,20 @@ glm::vec3 convertVelocity(
         {
             case GeometryType::Flat:
             {
-                float hypDist = calculator->computeDistance(oldPos, glm::vec3(0, 0, 0));
+                float hypDist = glm::length(glm::vec2(oldPos.x, oldPos.z));
                 if ( hypDist < 0.01f )
                     hypDist = 0.01f;
 
-                vMag = glm::length(oldVel);
-                float h = hypDist * vMag; // Hyperbolic angular momentum
+                vMag = glm::length(glm::vec2(oldVel.x, oldVel.z)); // xz speed
+                float h = hypDist * vMag;
 
-                float flatDist = glm::length(glm::vec2(oldPos.x, oldPos.z));
-                if (flatDist < 0.01f) flatDist = 0.01f;
+                const glm::vec2 posDisk(oldPos.x, oldPos.z);
+                const glm::vec2 radial = glm::normalize(posDisk);
+                const glm::vec2 tangentXZ(-radial.y, radial.x);
+                tangent = glm::vec3(tangentXZ.x, 0, tangentXZ.y);
 
-                float vFlat = h / flatDist; // Adjusted velocity for flat space
-
-                float theta = atan2(oldPos.z, oldPos.x);
-                tangent = std::abs(oldPos.z) < 0.01f && std::abs(oldPos.x) > 0.01f ?
-                    glm::vec3(0, 0, 1) :
-                    glm::vec3(-sin(theta), 0, cos(theta));
-
-                return vFlat * tangent;
+                float vFlat = h / hypDist; // Preserve xz speed
+                return vFlat * tangent; // vy = 0 in flat
             }
             case GeometryType::Spherical:
             {

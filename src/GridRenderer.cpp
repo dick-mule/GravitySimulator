@@ -817,7 +817,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
@@ -841,6 +841,7 @@ void GridRenderer::updateGrid()
 
 void GridRenderer::updateSimulation(float deltaTime)
 {
+    return;
     // if ( firstFrame > 100 )
     //     return;
 
