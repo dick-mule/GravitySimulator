@@ -212,75 +212,64 @@ void SphericalGeometry::generateGrid(
 
 float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
 {
-    const float r1 = glm::length(pos1);
-    const float r2 = glm::length(pos2);
-    if ( r1 < 0.01f || r2 < 0.01f )
-    {
-        // std::cout << "Warning: Small radius in computeDistance - r1: " << r1 << ", r2: " << r2 << std::endl;
-        return 0.01f;
-    }
+    const float R = m_GridScale / 2.0f;
+    const glm::vec3 pole(0.0f, R, 0.0f);
+    const glm::vec3 pos1FromPole = pos1 - pole;
+    const glm::vec3 pos2FromPole = pos2 - pole;
 
-    const float theta1 = atan2(pos1.z, pos1.x);
-    const float phi1 = acos(glm::clamp(pos1.y / r1, -1.0f, 1.0f));
-    const float theta2 = atan2(pos2.z, pos2.x);
-    const float phi2 = acos(glm::clamp(pos2.y / r2, -1.0f, 1.0f));
+    float distXZ1 = glm::length(glm::vec2(pos1FromPole.x, pos1FromPole.z));
+    if ( distXZ1 < 0.01f )
+        distXZ1 = 0.01f;
+    const float alpha1 = distXZ1 / R;
+    const float theta1 = atan2(pos1FromPole.z, pos1FromPole.x);
 
-    const float dtheta = theta2 - theta1;
-    const float dphi = phi2 - phi1;
-    float angularDist = sqrt(dtheta * dtheta + dphi * dphi);
-    if ( angularDist < 0.01f )
-    {
-        // std::cout << "Warning: Small angular distance - dtheta: " << dtheta << ", dphi: " << dphi << ", angularDist: " << angularDist << std::endl;
-        angularDist = 0.01f;
-    }
+    float distXZ2 = glm::length(glm::vec2(pos2FromPole.x, pos2FromPole.z));
+    if ( distXZ2 < 0.01f )
+        distXZ2 = 0.01f;
+    const float alpha2 = distXZ2 / R;
+    const float theta2 = atan2(pos2FromPole.z, pos2FromPole.x);
 
-    const float dist = angularDist * (m_GridScale / 2.0f);
-    // std::cout << "Computed distance: " << dist << std::endl;
-    return dist;
+    // Geodesic distance approximation (arc length on sphere)
+    const float deltaAlpha = fabs(alpha1 - alpha2);
+    const float deltaTheta = fabs(theta1 - theta2);
+    // Adjust for y-offset if significant; here we assume it's small relative to R
+    return R * sqrt(deltaAlpha * deltaAlpha + sin(alpha1) * sin(alpha2) * deltaTheta * deltaTheta);
 }
 
 void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const
 {
-    const glm::vec3 pos = obj.position;
-    const glm::vec3 pole(0.0f, radius, 0.0f); // Pole at (0, R, 0)
-    const glm::vec3 fromPole = pos - pole;
-    float r = glm::length(fromPole);
-    if ( r < 0.01f )
-    {
-        obj.position = pole; // Reset to sphere surface
-        obj.velocity = glm::vec3(0.0f);
-        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
-        return;
-    }
-    glm::vec3 normal = fromPole / r; // Unit normal (radial direction)
-    // Project acceleration onto the tangent plane
-    glm::vec3 accel = obj.acceleration;
-    float radialAccel = glm::dot(accel, normal);
-    accel -= radialAccel * normal; // Tangential acceleration only
-
-    // Verlet half-step: Compute velocity at t + dt/2
-    const glm::vec3 accelTerm = 0.5f * accel * deltaTime;
-    glm::vec3 halfV = obj.velocity + accelTerm;
-
-    // Update velocity to t + dt/2 (tangential)
-    float radialVel = glm::dot(halfV, normal);
-    halfV -= radialVel * normal;
-    obj.velocity = halfV;
-
+    const glm::vec3 pole(0.0f, radius, 0.0f);
+    const glm::vec3 accelTerm = 0.5f * obj.acceleration * deltaTime;
+    obj.velocity += accelTerm; // v(t + 0.5 * dt)
     if ( apply_verlet_half )
     {
-        // Update position using half-step velocity
-        glm::vec3 newPos = pos + halfV * deltaTime;
+        const glm::vec3 pos = obj.position;
+        const glm::vec3 vel = obj.velocity;
+        const glm::vec3 posFromPole = pos - pole;
 
-        // Enforce spherical constraint: Project onto sphere
-        // newPos = pole + glm::normalize(newPos - pole) * radius;
-        obj.position = newPos;
-        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
+        float distXZ = glm::length(glm::vec2(posFromPole.x, posFromPole.z));
+        if ( distXZ < 0.01f )
+            distXZ = 0.01f;
+        float alpha = distXZ / radius;
+        float theta = atan2(posFromPole.z, posFromPole.x);
 
-        // Recompute normal and ensure velocity remains tangential
-        normal = glm::normalize(newPos - pole);
-        radialVel = glm::dot(obj.velocity, normal);
-        obj.velocity -= radialVel * normal;
+        const glm::vec3 thetaTangent(-sin(theta), 0, cos(theta));
+        const glm::vec3 alphaTangent(cos(alpha) * cos(theta), -sin(alpha), cos(alpha) * sin(theta));
+
+        const float vAlpha = glm::dot(vel, alphaTangent);
+        const float vTheta = glm::dot(vel, thetaTangent);
+        const float vRadial = vel.y;
+
+        alpha += deltaTime * vAlpha / radius;
+        theta += deltaTime * vTheta / (radius * sin(alpha + 0.001f));
+        float yOffset = posFromPole.y + vRadial * deltaTime;
+
+        obj.position = glm::vec3(
+            radius * sin(alpha) * cos(theta),
+            radius * cos(alpha) + yOffset,
+            radius * sin(alpha) * sin(theta)
+        );
+        obj.modelMatrix = glm::translate(glm::mat4(1.0), obj.position);
     }
 }
 
@@ -396,60 +385,40 @@ void HyperbolicGeometry::generateGrid(
 
 float HyperbolicGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
 {
-    const float R = m_GridScale / 2.0f;
-    const float x1 = pos1.x / R, z1 = pos1.z / R;
-    const float x2 = pos2.x / R, z2 = pos2.z / R;
+    const float k = m_GridScale; // 250 to match grid
+    // Ensure y matches paraboloid (should already from convertCoordinates)
+    const float y1 = (pos1.x * pos1.x - pos1.z * pos1.z) / k;
+    const float y2 = (pos2.x * pos2.x - pos2.z * pos2.z) / k;
 
-    const float len1 = x1 * x1 + z1 * z1;
-    const float len2 = x2 * x2 + z2 * z2;
-    if ( len1 >= 0.99f || len2 >= 0.99f )
-    {
-        // std::cout << "Warning: Positions outside Poincaré disk - len1: " << len1 << ", len2: " << len2 << std::endl;
-        return std::numeric_limits<float>::max();
-    }
+    const float dx = pos1.x - pos2.x;
+    const float dy = y1 - y2; // Use paraboloid y, not input y
+    const float dz = pos1.z - pos2.z;
 
-    const float denom1 = 1.0f - len1;
-    const float denom2 = 1.0f - len2;
-    if ( denom1 <= 0.0f || denom2 <= 0.0f )
-    {
-        // std::cout << "Warning: Invalid denominator - denom1: " << denom1 << ", denom2: " << denom2 << std::endl;
-        return std::numeric_limits<float>::max();
-    }
-
-    const float d = 2.0f * ((x1 - x2) * (x1 - x2) + (z1 - z2) * (z1 - z2)) / (denom1 * denom2);
-    const float result = R * acosh(std::max(1.0f, 1.0f + d));
-    if ( !std::isfinite(result) )
-    {
-        // std::cout << "Warning: Non-finite distance - d: " << d << std::endl;
-        return std::numeric_limits<float>::max();
-    }
-    return result;
+    const float distance = sqrt(dx * dx + dy * dy + dz * dz);
+    return distance;
 }
 
 void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/, bool apply_verlet_half) const
 {
-    const float R = m_GridScale / 2.0f;
+    const float k = m_GridScale; // 250
     const glm::vec3 accelTerm = 0.5f * obj.acceleration * deltaTime;
-    obj.velocity += accelTerm; // v(t + 0.5 * dt) or v(t + dt) incrementally
+    obj.velocity += accelTerm;
+
     if ( apply_verlet_half )
     {
-        const glm::vec3 pos = obj.position;
-        glm::vec2 posDisk(pos.x, pos.z);
+        glm::vec2 posDisk(obj.position.x, obj.position.z);
         const glm::vec2 velDisk(obj.velocity.x, obj.velocity.z);
 
-        float len = glm::length(posDisk) / (m_GridScale / 2.0f);
-        if ( len < 0.01f )
-            len = 0.01f;
-        const float scale = 1.0f / (1.0f - len * len);
-        posDisk += velDisk * deltaTime * scale; // x(t + dt) using v(t + 0.5 * dt)
+        // Simple Euler step in xz (no Poincaré scaling)
+        posDisk += velDisk * deltaTime;
 
-        if ( glm::length(posDisk) > 0.99f * R )
-        {
-            posDisk = glm::normalize(posDisk) * 0.99f * R;
-            obj.velocity = glm::vec3(0, obj.velocity.y, 0); // Reset xz velocity
-        }
+        // Constrain to paraboloid
+        const float newY = (posDisk.x * posDisk.x - posDisk.y * posDisk.y) / k;
+        obj.position = glm::vec3(posDisk.x, newY, posDisk.y);
 
-        obj.position = glm::vec3(posDisk.x, pos.y, posDisk.y);
+        // Update vy to match surface
+        obj.velocity.y = (2.0f / k) * (obj.position.x * obj.velocity.x - obj.position.z * obj.velocity.z);
+
         obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
     }
 }
@@ -553,7 +522,8 @@ glm::vec3 convertCoordinates(
     const glm::vec3& coordinates,
     GeometryType start_type,
     GeometryType end_type,
-    float radius)
+    float radius,
+    const std::shared_ptr<Geometry>& geometry)
 {
     switch ( start_type )
     {
@@ -563,27 +533,17 @@ glm::vec3 convertCoordinates(
         {
             case GeometryType::Spherical:
             {
-                // Flat distance from origin (0, 0, 0)
+                const float flatDistXZ = glm::length(glm::vec2(coordinates.x, coordinates.z));
                 float flatDist = glm::length(coordinates);
                 if ( flatDist < 0.01f )
-                    flatDist = 0.01f; // Avoid division by zero
-
-                // Desired geodesic distance on sphere (preserve flat distance)
-                const float alpha = flatDist / radius; // Angular distance from Shape 0 (at north pole)
-
-                // Direction in flat space (normalized)
-                const float flatTheta = atan2(coordinates.z, coordinates.x); // Azimuthal angle in flat plane
-                const float flatPhi = acos(glm::clamp(coordinates.y / flatDist, -1.0f, 1.0f)); // Polar angle
-
-                // New position: Place at angular distance alpha from (0, 0, R), preserve flat direction
-                // Spherical coordinates: theta = flatTheta, phi = alpha
-                const float phi = alpha; // Polar angle from north pole
-                const float theta = flatTheta; // Preserve azimuthal direction
-
+                    flatDist = 0.01f;
+                const float alpha = flatDistXZ / radius; // xz distance to sphere
+                const float theta = atan2(coordinates.z, coordinates.x);
+                const float flatPhi = acos(glm::clamp(coordinates.y / flatDist, -1.0f, 1.0f));
                 return glm::vec3(
-                    radius * sin(phi) * cos(theta), // x
-                    radius * cos(phi),              // z
-                    radius * sin(phi) * sin(theta)  // y
+                    radius * sin(alpha) * cos(theta),
+                    radius * cos(alpha) + coordinates.y, // Preserve y offset
+                    radius * sin(alpha) * sin(theta)
                 );
             }
             case GeometryType::Hyperbolic:
@@ -609,31 +569,24 @@ glm::vec3 convertCoordinates(
         {
             case GeometryType::Flat:
             {
-                // Vector from Shape 0 at (0, R, 0) to the point GRAPHICS
-                const glm::vec3 fromNorthPole = coordinates - glm::vec3(0, radius, 0);
-                float chordDist = glm::length(fromNorthPole);
-                if ( chordDist < 0.01f )
-                    chordDist = 0.01f;
-
-                // Compute central angle (alpha) and arc length
-                const float alpha = 2.0f * asin(chordDist / (2.0f * radius));
-                const float flatDist = radius * alpha; // Distance in flat space
-
-                // Direction in spherical space relative to north pole (Z-Y coordinates switched GRAPHICS!)
-                const float theta = atan2(fromNorthPole.z, fromNorthPole.x); // Azimuthal angle
-                const float phi = acos(glm::clamp(fromNorthPole.y / chordDist, -1.0f, 1.0f)); // Polar angle from north pole
-
-                // Map to flat space, preserving xz-plane if y was 0
-                const glm::vec3 flatDir(
-                    sin(phi) * cos(theta), // x-component
-                    cos(phi),              // y-component (0 if theta keeps y = 0)
-                    sin(phi) * sin(theta)  // z-component (Recall y<->z in graphics)
+                float distXZ = glm::length(glm::vec2(coordinates.x, coordinates.z));
+                if ( distXZ < 0.01f )
+                    distXZ = 0.01f;
+                const float sinAlpha = distXZ / radius;
+                const float alpha = asin(glm::clamp(sinAlpha, 0.0f, 1.0f));
+                const float theta = atan2(coordinates.z, coordinates.x);
+                const float flatDistXZ = alpha * radius;
+                const float yOffset = coordinates.y - radius * cos(alpha);
+                const glm::vec3 result(
+                    flatDistXZ * cos(theta),
+                    yOffset,
+                    flatDistXZ * sin(theta)
                 );
-                return flatDist * flatDir; // Scale by flat distance
+                return result;
             }
             case GeometryType::Hyperbolic:
             {
-                const auto flat_coords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius);
+                const auto flat_coords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius, geometry);
                 return convertCoordinates(flat_coords, GeometryType::Flat, end_type, radius);
             }
             default:
@@ -658,7 +611,7 @@ glm::vec3 convertCoordinates(
         }
         case GeometryType::Spherical:
         {
-            const auto flatcoords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius);
+            const auto flatcoords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius, geometry);
             return convertCoordinates(flatcoords, GeometryType::Flat, end_type, radius);
         }
         default:
@@ -686,7 +639,6 @@ glm::vec3 convertVelocity(
         return glm::vec3(0.0f);
 
     glm::vec3 tangent;
-    glm::vec3 newPos = convertCoordinates(oldPos, start_type, end_type, radius);
 
     switch ( start_type )
     {
@@ -695,12 +647,23 @@ glm::vec3 convertVelocity(
         {
             case GeometryType::Spherical:
             {
-                // Flat xz-plane to spherical (pole at (0, R, 0))
-                const float theta = atan2(oldPos.z, oldPos.x); // Azimuthal angle in xz-plane
-                // Tangent for theta-direction (azimuthal around y-axis)
-                tangent = glm::vec3(-sin(theta), 0, cos(theta));
-                // float v_circ = sqrt(mu / dist); // Preserve circular velocity *Deprecated*
-                return vMag * tangent;
+                float flatDistXZ = glm::length(glm::vec2(oldPos.x, oldPos.z));
+                if ( flatDistXZ < 0.01f )
+                    flatDistXZ = 0.01f;
+                const float alpha = flatDistXZ / radius;
+                const float theta = atan2(oldPos.z, oldPos.x);
+
+                // Tangent vectors
+                const glm::vec3 thetaTangent(-sin(theta), 0, cos(theta)); // Azimuthal
+                const glm::vec3 alphaTangent(cos(alpha) * cos(theta), -sin(alpha), cos(alpha) * sin(theta)); // Polar
+
+                // Project flat velocity onto spherical directions
+                const float vTheta = glm::dot(oldVel, thetaTangent); // Azimuthal component
+                const float vAlpha = glm::dot(oldVel, alphaTangent); // Polar component
+                const float vRadial = 0.0f; // oldVel.y; // y-velocity affects radial offset
+
+                // Scale to preserve speed in tangential plane, add radial component
+                return vAlpha * alphaTangent + vTheta * thetaTangent + vRadial * glm::vec3(0, 1, 0);
             }
             case GeometryType::Hyperbolic:
             {
@@ -720,7 +683,7 @@ glm::vec3 convertVelocity(
 
                 // Compute vy from paraboloid: y = (x^2 - z^2) / k
                 const float k = 2.0f * radius; // 500
-                const float vy = 2.0f * (oldPos.x * oldVel.x - oldPos.z * oldVel.z) / k;
+                const float vy = (oldPos.x * oldVel.x - oldPos.z * oldVel.z) / k;
 
                 // Combine xz tangential velocity with vy
                 return vHyp * hypTangentXZ + glm::vec3(0, vy, 0);
@@ -733,10 +696,24 @@ glm::vec3 convertVelocity(
         {
             case GeometryType::Flat:
             {
-                glm::vec3 fromPole = oldPos - glm::vec3(0, radius, 0);
-                float theta = atan2(fromPole.z, fromPole.x);
-                tangent = glm::vec3(-sin(theta), 0, cos(theta));
-                return vMag * tangent;
+                float distXZPrime = glm::length(glm::vec2(oldPos.x, oldPos.z));
+                if ( distXZPrime < 0.01f )
+                    distXZPrime = 0.01f;
+                const float sinAlpha = distXZPrime / radius;
+                const float alpha = asin(glm::clamp(sinAlpha, 0.0f, 1.0f));
+                const float theta = atan2(oldPos.z, oldPos.x);
+
+                // Tangent vectors
+                const glm::vec3 thetaTangent(-sin(theta), 0, cos(theta));
+                const glm::vec3 alphaTangent(cos(alpha) * cos(theta), -sin(alpha), cos(alpha) * sin(theta));
+
+                // Project spherical velocity
+                const float vTheta = glm::dot(oldVel, thetaTangent);
+                const float vAlpha = glm::dot(oldVel, alphaTangent);
+                const float vY = oldVel.y; // Radial component maps to flat y
+
+                // Reconstruct flat velocity
+                return vAlpha * alphaTangent + vTheta * thetaTangent + vY * glm::vec3(0, 1, 0);
             }
             case GeometryType::Hyperbolic:
             {

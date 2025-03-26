@@ -71,7 +71,7 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 1; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
@@ -93,7 +93,8 @@ GridRenderer::GridRenderer(
             rawPosition,
             GeometryType::Flat,
             geometryType,
-            m_GridSize / 2);
+            m_GridSize / 2,
+            m_Geometry);
         orbiter.position = position;
         orbiter.modelMatrix = glm::translate(glm::mat4(1.0), position);
 
@@ -521,7 +522,7 @@ void GridRenderer::createGraphicsPipeline()
 
 void GridRenderer::updateGeometry(GeometryType type)
 {
-    // firstFrame = 0;
+    firstFrame = 0;
     if ( m_CurrentGeometryType != type )
     {
         // Step 1: Compute orbital properties for reference (if at least 2 objects)
@@ -541,7 +542,7 @@ void GridRenderer::updateGeometry(GeometryType type)
             glm::vec3 oldPos = obj.position; // Use position field directly
             glm::vec3 oldVel = obj.velocity;
 
-            glm::vec3 newPos = convertCoordinates(oldPos, m_CurrentGeometryType, type, R);
+            glm::vec3 newPos = convertCoordinates(oldPos, m_CurrentGeometryType, type, R, m_Geometry);
             glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu, m_Geometry);
             obj.position = newPos;
             obj.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
@@ -841,9 +842,9 @@ void GridRenderer::updateGrid()
 
 void GridRenderer::updateSimulation(float deltaTime)
 {
-    return;
-    // if ( firstFrame > 100 )
-    //     return;
+    // return;
+    if ( firstFrame > 100 )
+        return;
 
     const float R = m_GridScale / 2.0f;
     deltaTime = std::min(deltaTime, m_TimeStep);
@@ -874,44 +875,70 @@ void GridRenderer::updateSimulation(float deltaTime)
             glm::vec3 direction;
             if ( m_CurrentGeometryType == GeometryType::Spherical )
             {
-                const glm::vec3 pole(0.0, R, 0.0);
-                const float r1 = glm::length(pos1 - pole);
-                const float r2 = glm::length(pos2 - pole);
-                // Chord direction (straight line in 3D space)
-                glm::vec3 r = pos2 - pos1;
+                const glm::vec3 pole(0.0f, R, 0.0f);
+                const glm::vec3 pos1FromPole = pos1 - pole; // Central mass
+                const glm::vec3 pos2FromPole = pos2 - pole; // Orbiter
+
+                float distXZ2 = glm::length(glm::vec2(pos2FromPole.x, pos2FromPole.z));
+                if (distXZ2 < 0.01f) distXZ2 = 0.01f;
+                const float alpha2 = distXZ2 / R;
+                const float theta2 = atan2(pos2FromPole.z, pos2FromPole.x);
+
+                const glm::vec3 normal2 = glm::normalize(pos2FromPole); // At orbiter
+                const glm::vec3 thetaTangent2(-sin(theta2), 0, cos(theta2));
+                const glm::vec3 alphaTangent2(cos(alpha2) * cos(theta2), -sin(alpha2), cos(alpha2) * sin(theta2));
+
+                // Centripetal direction toward pole
+                glm::vec3 r = pole - pos2;
                 float chordDist = glm::length(r);
-                if ( chordDist < 0.01f )
-                    continue;
+                if (chordDist < 0.01f) continue;
 
                 direction = glm::normalize(r);
-                // Project direction onto tangent plane at pos1 (for shape1)
-                glm::vec3 normal1 = glm::normalize(pos1 - pole);
-                float radialComponent = glm::dot(direction, normal1);
-                direction -= radialComponent * normal1;
-                if ( glm::length(direction) < 1e-6f )
-                    continue;
+                // Project onto tangent plane at pos2
+                float radialComponent = glm::dot(direction, normal2);
+                direction -= radialComponent * normal2;
+                if (glm::length(direction) < 1e-6f)
+                {
+                    direction = thetaTangent2; // Fallback to tangential
+                }
                 direction = glm::normalize(direction);
-                // Use chord distance for force magnitude
-                // dist = chordDist; // Or float geoDist = m_Geometry->computeDistance(pos1, pos2) for geodesic
-                dist = m_Geometry->computeDistance(pos1, pos2);
+
+                // Adjust direction based on orbiter's velocity
+                glm::vec3 vel = shape2->m_Object.velocity;
+                float vTheta = glm::dot(vel, thetaTangent2); // Angular velocity component
+                if (vTheta < 0) // Counterclockwise (negative theta direction)
+                {
+                    direction = -direction; // Flip to align with velocity
+                }
+                // If vTheta > 0 (clockwise), keep direction as is
+
+                // Geodesic distance between pos1 and pos2
+                float distXZ1 = glm::length(glm::vec2(pos1FromPole.x, pos1FromPole.z));
+                if (distXZ1 < 0.01f) distXZ1 = 0.01f;
+                const float alpha1 = distXZ1 / R;
+                const float theta1 = atan2(pos1FromPole.z, pos1FromPole.x);
+                float centralAngle = acos(cos(alpha1) * cos(alpha2) + sin(alpha1) * sin(alpha2) * cos(theta2 - theta1));
+                dist = R * centralAngle;
+
+
+                // Debug
+                if ( firstFrame < 10 )
+                    std::cout << "Spherical: r = " << vecToString(r) << ", direction = " << vecToString(direction)
+                 << ", normal2 = " << vecToString(normal2) << ", dist = " << dist << "\n";
             }
             else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
             {
-                glm::vec2 p1(pos1.x / R, pos1.z / R); // xz-plane
-                glm::vec2 p2(pos2.x / R, pos2.z / R);
-                float len1 = glm::length2(p1);
-                float len2 = glm::length2(p2);
-                if ( len1 >= 0.99f || len2 >= 0.99f )
-                    continue;
+                const float k = 2.0f * m_GridScale; // 250
+                glm::vec3 diff(pos2.x - pos1.x,
+                               (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k,
+                               pos2.z - pos1.z);
+                direction = glm::normalize(diff); // 3D direction on paraboloid
 
-                const float denom1 = 1.0f - len1;
-                const float denom2 = 1.0f - len2;
-                if ( denom1 <= 0.0f || denom2 <= 0.0f )
-                    continue;
-
-                // Approximate geodesic direction in xz-plane
-                glm::vec2 diff = p2 - p1;
-                direction = glm::normalize(glm::vec3(diff.x, 0, diff.y));
+                // Project onto tangent plane (optional for precision)
+                glm::vec3 normal(2.0f * pos1.x / k, -1.0f, -2.0f * pos1.z / k);
+                normal = glm::normalize(normal);
+                direction -= glm::dot(direction, normal) * normal; // Tangential component
+                direction = glm::normalize(direction);
             }
             else
             {
@@ -928,7 +955,6 @@ void GridRenderer::updateSimulation(float deltaTime)
             // Compute force on shape2 due to shape1 (equal and opposite)
             float force2 = m_Gravity * shape1->m_Object.mass / (softenedDist * softenedDist);
             shape2->m_Object.acceleration -= force2 * direction; // Opposite direction
-
         }
     }
 
@@ -936,8 +962,15 @@ void GridRenderer::updateSimulation(float deltaTime)
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         auto& shape = m_MassiveObjects[i];
-        m_Geometry->updatePosition(shape->m_Object, deltaTime, m_GridScale / 2.0f, false);
+        m_Geometry->updatePosition(shape->m_Object, deltaTime, R, false);
 
+        if ( firstFrame < 10 )
+        {
+            std::cout << "Check Object[" << i << "] Values ...\n"
+                      << "  Position: " << vecToString(shape->m_Object.position) << "\n"
+                      << "  Velocity: " << vecToString(shape->m_Object.velocity) << "\n"
+                      << "  Acceleration: " << vecToString(shape->m_Object.acceleration) << "\n";
+        }
         // Add position to trail
         auto& [positions] = m_Trails[i];
         positions.push_back(shape->m_Object.modelMatrix[3]);

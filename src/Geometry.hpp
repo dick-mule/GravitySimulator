@@ -65,7 +65,8 @@ glm::vec3 convertCoordinates(
     const glm::vec3& coordinates,
     GeometryType start_type,
     GeometryType end_type,
-    float radius = 1.0f);
+    float radius = 1.0f,
+    const std::shared_ptr<Geometry>& geometry = nullptr);
 // Helper function to convert velocity
 glm::vec3 convertVelocity(
     const glm::vec3& oldPos,
