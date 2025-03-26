@@ -28,6 +28,8 @@ static std::string vecToString(const glm::vec3& vec)
     return ss.str();
 }
 
+static int firstFrame = 0;
+
 GridRenderer::GridRenderer(
     const vk::Device& device,
     const vk::PhysicalDevice& physicalDevice,
@@ -69,7 +71,7 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 1; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
@@ -519,40 +521,14 @@ void GridRenderer::createGraphicsPipeline()
 
 void GridRenderer::updateGeometry(GeometryType type)
 {
+    // firstFrame = 0;
     if ( m_CurrentGeometryType != type )
     {
         // Step 1: Compute orbital properties for reference (if at least 2 objects)
-        float angularMomentum = 0.0f;
-        float eccentricity = 0.0f;
-        float mu = 0.0f;
-        float dist = 0.0f;
-        glm::vec3 r(0.0f), v(0.0f);
-        if ( m_MassiveObjects.size() >= 2 )
-        {
-            glm::vec3 pos1 = m_MassiveObjects[0]->m_Object.position; // Use position directly
-            glm::vec3 pos2 = m_MassiveObjects[1]->m_Object.position;
-            glm::vec3 vel1 = m_MassiveObjects[0]->m_Object.velocity;
-            glm::vec3 vel2 = m_MassiveObjects[1]->m_Object.velocity;
-
-            r = pos2 - pos1;
-            v = vel2 - vel1;
-            dist = m_Geometry->computeDistance(pos1, pos2);
-            if ( dist < 0.01f )
-                dist = 0.01f;
-
-            // Specific angular momentum (per unit reduced mass)
-            angularMomentum = glm::length(glm::cross(r, v)) / dist;
-
-            // Specific mechanical energy
-            mu = m_Gravity * (m_MassiveObjects[0]->m_Object.mass + m_MassiveObjects[1]->m_Object.mass);
-            float speed = glm::length(v);
-            float energy = (speed * speed) / 2.0f - mu / dist;
-
-            // Eccentricity
-            eccentricity = sqrt(std::max(0.0f, 1.0f + (2.0f * energy * angularMomentum * angularMomentum) / (mu * mu)));
-            std::cout << "Before switch - Angular Momentum: " << angularMomentum
-                      << ", Eccentricity: " << eccentricity << ", Distance: " << dist << std::endl;
-        }
+        constexpr float angularMomentum = 0.0f;
+        constexpr float eccentricity = 0.0f;
+        constexpr float mu = 0.0f;
+        constexpr float dist = 0.0f;
 
         // Step 2: Update geometry factory
         m_Geometry = geometryFactory(type, m_GridSize, m_GridScale);
@@ -565,54 +541,19 @@ void GridRenderer::updateGeometry(GeometryType type)
             glm::vec3 oldPos = obj.position; // Use position field directly
             glm::vec3 oldVel = obj.velocity;
 
-            // Convert position
             glm::vec3 newPos = convertCoordinates(oldPos, m_CurrentGeometryType, type, R);
+            glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu);
             obj.position = newPos;
             obj.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
-
-            // Convert velocity to preserve orbital characteristics
-            glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu);
             obj.velocity = newVel;
-
-            // Reset acceleration (will be recomputed in updateSimulation)
-            obj.acceleration = glm::vec3(0.0f);
-
+            obj.acceleration = glm::vec3(0, 0, 0);
             std::cout << "Object at (" << oldPos.x << ", " << oldPos.y << ", " << oldPos.z
                       << ") -> (" << newPos.x << ", " << newPos.y << ", " << newPos.z
                       << "), Vel (" << oldVel.x << ", " << oldVel.y << ", " << oldVel.z
                       << ") -> (" << newVel.x << ", " << newVel.y << ", " << newVel.z << ")\n";
         }
 
-        // Step 4: Adjust m_VelocityAngle (if still used elsewhere)
-        if ( type == GeometryType::Hyperbolic && m_CurrentGeometryType == GeometryType::Flat )
-        {
-            if ( eccentricity < 0.1f ) // Circular
-                m_VelocityAngle = 0.0f;
-            else if ( eccentricity < 1.0f ) // Elliptical
-                m_VelocityAngle = 45.0f * eccentricity;
-            else // Hyperbolic
-                m_VelocityAngle = 45.0f;
-            std::cout << "Hyperbolic m_VelocityAngle: " << m_VelocityAngle << "\n";
-        }
-        else if ( type == GeometryType::Flat && m_CurrentGeometryType == GeometryType::Hyperbolic )
-        {
-            float newDist = m_Geometry->computeDistance(
-                m_MassiveObjects[0]->m_Object.position,
-                m_MassiveObjects[1]->m_Object.position);
-            if ( newDist < 0.01f )
-                newDist = 0.01f;
-            float h_max = sqrt(mu * newDist);
-            float normH = angularMomentum / h_max;
-            m_VelocityAngle = (normH > 0.8f) ? 0.0f : (normH > 0.2f) ? 45.0f * (1.0f - (normH - 0.2f) / 0.6f) : 45.0f;
-            m_OrbitFactor = 1.0f;
-            std::cout << "Flat m_VelocityAngle: " << m_VelocityAngle << "\n";
-        }
-        else
-        {
-            m_VelocityAngle = 0.0f; // Default for spherical or others
-        }
-
-        // Step 5: Update grid and buffers
+        // Step 4: Update grid and buffers
         m_CurrentGeometryType = type;
         generateGrid();
         createVertexBuffer();
@@ -900,13 +841,16 @@ void GridRenderer::updateGrid()
 
 void GridRenderer::updateSimulation(float deltaTime)
 {
-    deltaTime = std::min(deltaTime, m_TimeStep);
+    // if ( firstFrame > 100 )
+    //     return;
 
+    const float R = m_GridScale / 2.0f;
+    deltaTime = std::min(deltaTime, m_TimeStep);
     // Step 1: Compute accelerations for all objects (Verlet Method)
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         auto& obj = m_MassiveObjects[i]->m_Object;
-        m_Geometry->updatePosition(obj, deltaTime, m_GridScale / 2.0f, true);
+        m_Geometry->updatePosition(obj, deltaTime, R, true);
         // Reset acceleration
         obj.acceleration = glm::vec3(0.0f);
     }
@@ -929,39 +873,44 @@ void GridRenderer::updateSimulation(float deltaTime)
             glm::vec3 direction;
             if ( m_CurrentGeometryType == GeometryType::Spherical )
             {
-                float r1 = glm::length(pos1);
-                float r2 = glm::length(pos2);
-                if ( r1 < 0.01f || r2 < 0.01f )
-                    continue;
-
+                const glm::vec3 pole(0.0, R, 0.0);
+                const float r1 = glm::length(pos1 - pole);
+                const float r2 = glm::length(pos2 - pole);
                 // Chord direction (straight line in 3D space)
                 glm::vec3 r = pos2 - pos1;
                 float chordDist = glm::length(r);
-                if (chordDist < 0.01f)
+                if ( chordDist < 0.01f )
                     continue;
-                direction = glm::normalize(r);
 
+                direction = glm::normalize(r);
                 // Project direction onto tangent plane at pos1 (for shape1)
-                glm::vec3 normal1 = glm::normalize(pos1);
+                glm::vec3 normal1 = glm::normalize(pos1 - pole);
                 float radialComponent = glm::dot(direction, normal1);
                 direction -= radialComponent * normal1;
+                if ( glm::length(direction) < 1e-6f )
+                    continue;
                 direction = glm::normalize(direction);
-
                 // Use chord distance for force magnitude
-                dist = chordDist;
+                // dist = chordDist; // Or float geoDist = m_Geometry->computeDistance(pos1, pos2) for geodesic
+                dist = m_Geometry->computeDistance(pos1, pos2);
             }
             else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
             {
-                const float R = m_GridScale / 2.0f;
-                glm::vec2 p1(pos1.x / R, pos1.y / R);
-                glm::vec2 p2(pos2.x / R, pos2.y / R);
-                glm::vec2 diff = p2 - p1;
-                float denom1 = 1.0f - p1.x * p1.x - p1.y * p1.y;
-                float denom2 = 1.0f - p2.x * p2.x - p2.y * p2.y;
+                glm::vec2 p1(pos1.x / R, pos1.z / R); // xz-plane
+                glm::vec2 p2(pos2.x / R, pos2.z / R);
+                float len1 = glm::length2(p1);
+                float len2 = glm::length2(p2);
+                if ( len1 >= 0.99f || len2 >= 0.99f )
+                    continue;
+
+                const float denom1 = 1.0f - len1;
+                const float denom2 = 1.0f - len2;
                 if ( denom1 <= 0.0f || denom2 <= 0.0f )
                     continue;
-                glm::vec2 dir = diff / (denom1 * denom2);
-                direction = glm::normalize(glm::vec3(dir.x, dir.y, 0.0f));
+
+                // Approximate geodesic direction in xz-plane
+                glm::vec2 diff = p2 - p1;
+                direction = glm::normalize(glm::vec3(diff.x, 0, diff.y));
             }
             else
             {
@@ -1019,6 +968,8 @@ void GridRenderer::updateSimulation(float deltaTime)
     }
     m_TotalEnergy = m_KineticEnergy + m_PotentialEnergy;
     updateTrails();
+
+    firstFrame++;
 }
 
 void GridRenderer::renderCameraControls()

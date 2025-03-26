@@ -89,7 +89,7 @@ protected:
 public:
     using Shape::Shape;
     ~Cube() override = default;
-    std::string getName() const override { return "Cube: " + std::to_string(m_MyId); }
+    std::string getName() const override { return "Cube: " + std::to_string(m_MyId - 1); }
     void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) override;
 };
 
@@ -103,6 +103,6 @@ protected:
 public:
     using Shape::Shape;
     ~Sphere() override = default;
-    std::string getName() const override { return "Sphere: " + std::to_string(m_MyId); }
+    std::string getName() const override { return "Sphere: " + std::to_string(m_MyId - 1); }
     void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) override;
 };
