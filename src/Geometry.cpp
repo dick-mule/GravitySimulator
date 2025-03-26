@@ -212,64 +212,75 @@ void SphericalGeometry::generateGrid(
 
 float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
 {
-    const float R = m_GridScale / 2.0f;
-    const glm::vec3 pole(0.0f, R, 0.0f);
-    const glm::vec3 pos1FromPole = pos1 - pole;
-    const glm::vec3 pos2FromPole = pos2 - pole;
+    const float r1 = glm::length(pos1);
+    const float r2 = glm::length(pos2);
+    if ( r1 < 0.01f || r2 < 0.01f )
+    {
+        // std::cout << "Warning: Small radius in computeDistance - r1: " << r1 << ", r2: " << r2 << std::endl;
+        return 0.01f;
+    }
 
-    float distXZ1 = glm::length(glm::vec2(pos1FromPole.x, pos1FromPole.z));
-    if ( distXZ1 < 0.01f )
-        distXZ1 = 0.01f;
-    const float alpha1 = distXZ1 / R;
-    const float theta1 = atan2(pos1FromPole.z, pos1FromPole.x);
+    const float theta1 = atan2(pos1.z, pos1.x);
+    const float phi1 = acos(glm::clamp(pos1.y / r1, -1.0f, 1.0f));
+    const float theta2 = atan2(pos2.z, pos2.x);
+    const float phi2 = acos(glm::clamp(pos2.y / r2, -1.0f, 1.0f));
 
-    float distXZ2 = glm::length(glm::vec2(pos2FromPole.x, pos2FromPole.z));
-    if ( distXZ2 < 0.01f )
-        distXZ2 = 0.01f;
-    const float alpha2 = distXZ2 / R;
-    const float theta2 = atan2(pos2FromPole.z, pos2FromPole.x);
+    const float dtheta = theta2 - theta1;
+    const float dphi = phi2 - phi1;
+    float angularDist = sqrt(dtheta * dtheta + dphi * dphi);
+    if ( angularDist < 0.01f )
+    {
+        // std::cout << "Warning: Small angular distance - dtheta: " << dtheta << ", dphi: " << dphi << ", angularDist: " << angularDist << std::endl;
+        angularDist = 0.01f;
+    }
 
-    // Geodesic distance approximation (arc length on sphere)
-    const float deltaAlpha = fabs(alpha1 - alpha2);
-    const float deltaTheta = fabs(theta1 - theta2);
-    // Adjust for y-offset if significant; here we assume it's small relative to R
-    return R * sqrt(deltaAlpha * deltaAlpha + sin(alpha1) * sin(alpha2) * deltaTheta * deltaTheta);
+    const float dist = angularDist * (m_GridScale / 2.0f);
+    // std::cout << "Computed distance: " << dist << std::endl;
+    return dist;
 }
 
 void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const
 {
-    const glm::vec3 pole(0.0f, radius, 0.0f);
-    const glm::vec3 accelTerm = 0.5f * obj.acceleration * deltaTime;
-    obj.velocity += accelTerm; // v(t + 0.5 * dt)
+    const glm::vec3 pos = obj.position;
+    const glm::vec3 pole(0.0f, radius, 0.0f); // Pole at (0, R, 0)
+    const glm::vec3 fromPole = pos - pole;
+    float r = glm::length(fromPole);
+    if ( r < 0.01f )
+    {
+        obj.position = pole; // Reset to sphere surface
+        obj.velocity = glm::vec3(0.0f);
+        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
+        return;
+    }
+    glm::vec3 normal = fromPole / r; // Unit normal (radial direction)
+    // Project acceleration onto the tangent plane
+    glm::vec3 accel = obj.acceleration;
+    float radialAccel = glm::dot(accel, normal);
+    accel -= radialAccel * normal; // Tangential acceleration only
+
+    // Verlet half-step: Compute velocity at t + dt/2
+    const glm::vec3 accelTerm = 0.5f * accel * deltaTime;
+    glm::vec3 halfV = obj.velocity + accelTerm;
+
+    // Update velocity to t + dt/2 (tangential)
+    float radialVel = glm::dot(halfV, normal);
+    halfV -= radialVel * normal;
+    obj.velocity = halfV;
+
     if ( apply_verlet_half )
     {
-        const glm::vec3 pos = obj.position;
-        const glm::vec3 vel = obj.velocity;
-        const glm::vec3 posFromPole = pos - pole;
+        // Update position using half-step velocity
+        glm::vec3 newPos = pos + halfV * deltaTime;
 
-        float distXZ = glm::length(glm::vec2(posFromPole.x, posFromPole.z));
-        if ( distXZ < 0.01f )
-            distXZ = 0.01f;
-        float alpha = distXZ / radius;
-        float theta = atan2(posFromPole.z, posFromPole.x);
+        // Enforce spherical constraint: Project onto sphere
+        // newPos = pole + glm::normalize(newPos - pole) * radius;
+        obj.position = newPos;
+        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
 
-        const glm::vec3 thetaTangent(-sin(theta), 0, cos(theta));
-        const glm::vec3 alphaTangent(cos(alpha) * cos(theta), -sin(alpha), cos(alpha) * sin(theta));
-
-        const float vAlpha = glm::dot(vel, alphaTangent);
-        const float vTheta = glm::dot(vel, thetaTangent);
-        const float vRadial = vel.y;
-
-        alpha += deltaTime * vAlpha / radius;
-        theta += deltaTime * vTheta / (radius * sin(alpha + 0.001f));
-        float yOffset = posFromPole.y + vRadial * deltaTime;
-
-        obj.position = glm::vec3(
-            radius * sin(alpha) * cos(theta),
-            radius * cos(alpha) + yOffset,
-            radius * sin(alpha) * sin(theta)
-        );
-        obj.modelMatrix = glm::translate(glm::mat4(1.0), obj.position);
+        // Recompute normal and ensure velocity remains tangential
+        normal = glm::normalize(newPos - pole);
+        radialVel = glm::dot(obj.velocity, normal);
+        obj.velocity -= radialVel * normal;
     }
 }
 
