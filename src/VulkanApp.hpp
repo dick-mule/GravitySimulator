@@ -46,8 +46,8 @@ private:
     vk::Semaphore m_RenderFinishedSemaphore;
     vk::Fence m_InFlightFence;
 
-    const int m_WIDTH = 1280;
-    const int m_HEIGHT = 720;
+    const int m_WIDTH = 2000;
+    const int m_HEIGHT = 1500;
 
     std::shared_ptr<ImGuiHandler> m_ImGuiHandler;
     std::shared_ptr<GridRenderer> m_GridRenderer;

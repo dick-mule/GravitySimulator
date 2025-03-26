@@ -12,15 +12,16 @@ class Geometry
 {
 protected:
     int m_GridSize;
-    float m_GridScale;
+    float m_GridScale, m_WarpStrength;
 public:
-    Geometry(int grid_size, float grid_scale);
+    Geometry(int grid_size, float grid_scale, float warp_strength = 1.);
     virtual ~Geometry() = default;
     virtual void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) = 0;
     virtual float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const = 0;
-    virtual void updatePosition(Object& obj, float deltaTime, float radius) const = 0;
+    virtual void updatePosition(Object& obj, float deltaTime, float radius, bool verlet_half) const = 0;
     virtual void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) = 0;
     void setGridParams(int grid_size, float grid_scale) { m_GridSize = grid_size; m_GridScale = grid_scale; }
+    void setWarpStrength(float warp_strength) { m_WarpStrength = warp_strength; }
 };
 
 class FlatGeometry : public Geometry
@@ -31,7 +32,7 @@ public:
 
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
-    void updatePosition(Object& obj, float deltaTime, float radius) const override;
+    void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
@@ -43,7 +44,7 @@ public:
 
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
-    void updatePosition(Object& obj, float deltaTime, float radius) const override;
+    void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
@@ -55,7 +56,7 @@ public:
 
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
-    void updatePosition(Object& obj, float deltaTime, float radius) const override;
+    void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
 };
 
@@ -65,3 +66,12 @@ glm::vec3 convertCoordinates(
     GeometryType start_type,
     GeometryType end_type,
     float radius = 1.0f);
+// Helper function to convert velocity
+glm::vec3 convertVelocity(
+    const glm::vec3& oldPos,
+    const glm::vec3& oldVel,
+    GeometryType start_type,
+    GeometryType end_type,
+    float radius,
+    float dist,
+    float mu);

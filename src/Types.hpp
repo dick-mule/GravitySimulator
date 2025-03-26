@@ -27,6 +27,7 @@ struct Object
     uint32_t indexCount;
     glm::mat4 modelMatrix;
     float mass = 0.0f;
+    glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 velocity = glm::vec3(0.0f);
     glm::vec3 acceleration = glm::vec3(0.0f);
 };
@@ -46,14 +47,14 @@ struct Camera
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);        // Up vector (0, 1, 0)
     float fov = 90.0f;                                  // FOV in degrees
     float nearPlane = 0.1f;
-    float farPlane = 100.0f;
+    float farPlane = 500.0f;
 
     // Orbit control parameters
     float azimuth = glm::radians(45.0f);                // Angle in XZ-plane (radians)
     float elevation = glm::radians(45.0f);              // Angle above XZ-plane (radians)
     float radius = 30.0f;                               // Distance from target
-    float minRadius = 5.0f;                             // Minimum zoom distance
-    float maxRadius = 100.0f;                           // Maximum zoom distance
+    float minRadius = 0.01f;                             // Minimum zoom distance
+    float maxRadius = 1000.0f;                           // Maximum zoom distance
     float panSpeed = 0.1f;                              // Panning speed
     float orbitSpeed = 0.005f;                          // Orbiting speed
     float zoomSpeed = 1.0f;                             // Zooming speed
@@ -70,18 +71,19 @@ public:
 protected:
     int m_MyId;
     static std::atomic<int> s_NumShapes;
+    float m_Size;
 
 public:
     explicit Shape(const Object& object);
     virtual ~Shape();
     virtual std::string getName() const = 0;
     virtual void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) = 0;
+    void setSize(float size) { m_Size = size; }
 };
 
 class Cube final : public Shape
 {
 protected:
-    float m_CubeSize = 1.25f;
     std::string m_Name = "Cube";
 
 public:
@@ -94,7 +96,6 @@ public:
 class Sphere final : public Shape
 {
 protected:
-    float m_Radius = 1.0f;
     int m_Stacks = 20;
     int m_Slices = 20;
     std::string m_Name = "Sphere";

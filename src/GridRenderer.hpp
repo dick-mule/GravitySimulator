@@ -66,14 +66,15 @@ private:
     std::vector<std::shared_ptr<Shape>> m_MassiveObjects;
     float m_ZoomLevel = 0.;
     float m_Gravity = 0.2f;
-    int m_GridSize = 200;
-    float m_GridScale = 100.0f;
+    int m_GridSize = 500;
+    float m_GridScale = 250.0f;
     float m_TotalEnergy = 0.0f;
     float m_KineticEnergy = 0.0f;
     float m_PotentialEnergy = 0.0f;
     float m_TimeStep = 0.05f;
     float m_VelocityAngle = 0.0f;
     float m_OrbitFactor = 1.0f;
+    float m_WarpStrength = 1.0f;
 
     struct Trail {
         std::deque<glm::vec3> positions;

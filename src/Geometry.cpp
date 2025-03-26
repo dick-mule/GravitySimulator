@@ -8,9 +8,10 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/fast_trigonometry.hpp>
 
-Geometry::Geometry(int grid_size, float grid_scale)
+Geometry::Geometry(int grid_size, float grid_scale, float warp_strength)
     : m_GridSize(grid_size)
     , m_GridScale(grid_scale)
+    , m_WarpStrength(warp_strength)
 {
 }
 
@@ -53,11 +54,16 @@ float FlatGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2
     return glm::length(pos2 - pos1);
 }
 
-void FlatGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/) const
+void FlatGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/, bool apply_verlet_half) const
 {
-    obj.velocity += obj.acceleration * deltaTime;
-    glm::vec3 translation = obj.velocity * deltaTime;
-    obj.modelMatrix[3] += glm::vec4(translation, 0.0f);
+    const glm::vec3 accelTerm = 0.5f * obj.acceleration * deltaTime;
+    const glm::vec3 halfV = (obj.velocity + accelTerm) * deltaTime;
+    obj.velocity += accelTerm; // v(t + 0.5 * dt)
+    if ( apply_verlet_half )
+    {
+        obj.position += halfV; // x(t + dt) = x(t) + halfV
+        obj.modelMatrix = glm::translate(glm::mat4(1.0), obj.position);
+    }
 }
 
 static std::string vecToString(const glm::vec3& vec)
@@ -83,11 +89,14 @@ void FlatGeometry::warpGrid(
     // Compute the center of mass and relative velocity for ripple effect
     glm::vec3 centerOfMass(0.0f);
     float totalMass = 0.0f;
+    float maxMass = 0.0;
     for ( auto& shape : massiveObjects )
     {
         float mass = shape->m_Object.mass;
         if ( mass <= 0.0f )
             continue;
+        if ( mass > maxMass )
+            maxMass = mass;
         centerOfMass += mass * glm::vec3(shape->m_Object.modelMatrix[3]);
         totalMass += mass;
     }
@@ -117,7 +126,7 @@ void FlatGeometry::warpGrid(
         Vertex& vertex = baseVertices[v];
         // Compute gravitational potential at the vertex
         float potential = 0.0f;
-        for (size_t i = 0; i < massiveObjects.size(); ++i)
+        for ( size_t i = 0; i < massiveObjects.size(); ++i )
         {
             auto& obj = massiveObjects[i];
             const float mass = obj->m_Object.mass;
@@ -129,8 +138,7 @@ void FlatGeometry::warpGrid(
         }
 
         // Base displacement from potential
-        constexpr float warpStrength = 1.0f;
-        float displacement = -potential * warpStrength; // Negative potential -> downward displacement
+        float displacement = -potential * m_WarpStrength; // Negative potential -> downward displacement
 
         // Add ripple effect
         if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
@@ -140,7 +148,7 @@ void FlatGeometry::warpGrid(
             glm::vec3 b = massiveObjects[0]->m_Object.modelMatrix[3];
             glm::vec3 ab = b - a;
             glm::vec3 ap = p - a;
-            float abLengthSquared = glm::dot(ab, ab);
+            const float abLengthSquared = glm::dot(ab, ab);
             if ( abLengthSquared < 1e-6f )
                 continue;
 
@@ -149,7 +157,7 @@ void FlatGeometry::warpGrid(
             glm::vec3 closestPoint = a + t * ab;
             float distToLine = computeDistance(vertex.position, closestPoint);
 
-            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f);
+            float rippleAmplitude = 0.3f * m_WarpStrength * totalMass / (distToLine + 1.0f);
             float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
             displacement += rippleAmplitude * sin(ripplePhase);
         }
@@ -159,7 +167,7 @@ void FlatGeometry::warpGrid(
         displacement = std::max(displacement, -maxDisplacement);
 
         // Apply displacement along the z-axis
-        vertex.position.y -= displacement; // Positive potential -> upward, negative -> downward
+        vertex.position.y -= displacement;  // Positive potential -> upward, negative -> downward
 
         // Update normal after warping (approximate normal for flat geometry)
         vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Simplified for flat geometry
@@ -274,53 +282,45 @@ float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3&
     return dist;
 }
 
-void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radius) const
+void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const
 {
-    const float maxStep = 0.005f; // Reduce step size for better accuracy
-    int steps = static_cast<int>(std::ceil(deltaTime / maxStep));
-    float subStep = deltaTime / steps;
-
-    for ( int s = 0; s < steps; ++s )
+    glm::vec3 pos = obj.position; // Use obj.position instead of modelMatrix[3] for consistency
+    float r = glm::length(pos);
+    if ( r < 0.01f )
     {
-        glm::vec3 pos = obj.modelMatrix[3];
-        float r = glm::length(pos);
-        if ( r < 0.01f )
-        {
-            obj.modelMatrix[3] = glm::vec4(0.0f, 0.0f, radius, 1.0f);
-            obj.velocity = glm::vec3(0.0f);
-            return;
-        }
+        obj.position = glm::vec3(0.0f, 0.0f, radius); // Reset to sphere surface
+        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
+        obj.velocity = glm::vec3(0.0f);
+        return;
+    }
+    glm::vec3 normal = pos / r; // Unit normal (radial direction)
 
-        // Compute the normal at the current position
-        glm::vec3 normal = glm::normalize(pos);
+    // Project acceleration onto the tangent plane
+    glm::vec3 accel = obj.acceleration;
+    float radialAccel = glm::dot(accel, normal);
+    accel -= radialAccel * normal; // Tangential acceleration only
 
-        // Project velocity onto the tangent plane
-        glm::vec3 vel = obj.velocity;
-        float radialVel = glm::dot(vel, normal);
-        vel -= radialVel * normal;
+    // Verlet half-step: Compute velocity at t + dt/2
+    const glm::vec3 accelTerm = 0.5f * accel * deltaTime;
+    const glm::vec3 halfV = obj.velocity + accelTerm;
 
-        // Project acceleration onto the tangent plane
-        glm::vec3 accel = obj.acceleration;
-        float radialAccel = glm::dot(accel, normal);
-        accel -= radialAccel * normal;
+    // Update velocity to t + dt/2 (tangential)
+    obj.velocity = halfV;
+    float radialVel = glm::dot(obj.velocity, normal);
+    obj.velocity -= radialVel * normal; // Ensure velocity remains tangential
 
-        // Update velocity
-        vel += accel * subStep;
-        obj.velocity = vel;
+    if ( apply_verlet_half )
+    {
+        // Update position using half-step velocity
+        glm::vec3 newPos = pos + halfV * deltaTime;
 
-        // Project velocity again before position update
-        radialVel = glm::dot(obj.velocity, normal);
-        obj.velocity -= radialVel * normal;
+        // Enforce spherical constraint: Project onto sphere
+        newPos = glm::normalize(newPos) * radius;
+        obj.position = newPos;
+        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
 
-        // Update position
-        pos += obj.velocity * subStep;
-
-        // Strictly enforce the spherical constraint
-        pos = glm::normalize(pos) * radius;
-        obj.modelMatrix[3] = glm::vec4(pos, 1.0f);
-
-        // Recompute normal and project velocity again
-        normal = glm::normalize(pos);
+        // Recompute normal and ensure velocity remains tangential
+        normal = glm::normalize(newPos);
         radialVel = glm::dot(obj.velocity, normal);
         obj.velocity -= radialVel * normal;
     }
@@ -340,12 +340,15 @@ void SphericalGeometry::warpGrid(
 
     glm::vec3 centerOfMass(0.0f);
     float totalMass = 0.0f;
-    for ( const auto& obj : massiveObjects )
+    float maxMass = 0.0;
+    for ( auto& shape : massiveObjects )
     {
-        float mass = obj->m_Object.mass;
+        float mass = shape->m_Object.mass;
         if ( mass <= 0.0f )
             continue;
-        centerOfMass += mass * glm::vec3(obj->m_Object.modelMatrix[3]);
+        if ( mass > maxMass )
+            maxMass = mass;
+        centerOfMass += mass * glm::vec3(shape->m_Object.modelMatrix[3]);
         totalMass += mass;
     }
     if ( totalMass > 0.0f )
@@ -366,6 +369,7 @@ void SphericalGeometry::warpGrid(
 
     static float time = 0.0f;
     time += 0.016f;
+    softeningLength = std::max(softeningLength, 10.0f);
 
     for ( Vertex& vertex : baseVertices )
     {
@@ -377,11 +381,10 @@ void SphericalGeometry::warpGrid(
                 continue;
             float dist = computeDistance(vertex.position, obj->m_Object.modelMatrix[3]);
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= mass / softenedDist;
+            potential -= (1.0 + std::log(maxMass / mass)) * std::pow(mass / softenedDist, 0.8); // Gravitational potential
         }
 
-        constexpr float warpStrength = 1.0f;
-        float displacement = -potential * warpStrength;
+        float displacement = -potential * m_WarpStrength;
 
         if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
         {
@@ -399,7 +402,7 @@ void SphericalGeometry::warpGrid(
             glm::vec3 closestPoint = a + t * ab;
             float distToLine = computeDistance(vertex.position, closestPoint);
 
-            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f);
+            float rippleAmplitude = 0.3f * m_WarpStrength * totalMass / (distToLine + 1.0f);
             float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
             displacement += rippleAmplitude * sin(ripplePhase);
         }
@@ -497,7 +500,7 @@ float HyperbolicGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3
     }
     return result;}
 
-void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/) const
+void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*radius not used*/, bool apply_verlet_half) const
 {
     obj.velocity += obj.acceleration * deltaTime;
     const glm::vec3 pos = obj.modelMatrix[3];
@@ -533,12 +536,15 @@ void HyperbolicGeometry::warpGrid(
     float totalMass = 0.0f;
     const float R = m_GridScale / 2.0f; // Radius of the Poincaré disk (50.0f)
     const float k = m_GridScale; // Scale factor for z = (x^2 - y^2) / k (100.0f)
-    for ( const auto& obj : massiveObjects )
+    float maxMass = 0.0;
+    for ( auto& shape : massiveObjects )
     {
-        float mass = obj->m_Object.mass;
+        float mass = shape->m_Object.mass;
         if ( mass <= 0.0f )
             continue;
-        centerOfMass += mass * glm::vec3(obj->m_Object.modelMatrix[3]);
+        if ( mass > maxMass )
+            maxMass = mass;
+        centerOfMass += mass * glm::vec3(shape->m_Object.modelMatrix[3]);
         totalMass += mass;
     }
     if ( totalMass > 0.0f )
@@ -560,6 +566,8 @@ void HyperbolicGeometry::warpGrid(
     static float time = 0.0f;
     time += 0.016f;
 
+    softeningLength = std::max(softeningLength, 10.0f);
+
     for ( Vertex& vertex : baseVertices )
     {
         // Compute damping factor based on distance from center
@@ -579,11 +587,10 @@ void HyperbolicGeometry::warpGrid(
             if ( dist >= std::numeric_limits<float>::max() )
                 continue; // Skip if distance computation failed
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= mass / softenedDist;
+            potential -= (1.0 + std::log(maxMass / mass)) * mass / softenedDist / (m_GridScale / 10.); // Gravitational potential
         }
 
-        constexpr float warpStrength = 1.0f;
-        float displacement = -potential * warpStrength;
+        float displacement = -potential * m_WarpStrength;
         // Add ripple effect emanating from the line between the two masses
         if ( massiveObjects.size() == 2 && orbitalFrequency > 0.0f )
         {
@@ -606,7 +613,7 @@ void HyperbolicGeometry::warpGrid(
             if ( distToLine >= std::numeric_limits<float>::max() )
                 continue;
 
-            float rippleAmplitude = 0.3f * warpStrength * totalMass / (distToLine + 1.0f) * damping;
+            float rippleAmplitude = 0.3f * m_WarpStrength * totalMass / (distToLine + 1.0f) * damping;
             float ripplePhase = orbitalFrequency * time - 0.1f * distToLine;
             displacement += rippleAmplitude * sin(ripplePhase);
         }
@@ -661,37 +668,105 @@ glm::vec3 convertCoordinates(
         {
             case GeometryType::Spherical:
             {
-                // Convert flatPos1 to spherical
-                float r1 = glm::length(coordinates);
-                if ( r1 < 0.01f )
-                    r1 = 0.01f; // Avoid division by zero
-                const float theta1 = acos(coordinates.z / r1);
-                const float phi1 = atan2(coordinates.y, coordinates.x);
+                // Flat distance from origin (0, 0, 0)
+                float flatDist = glm::length(coordinates);
+                if ( flatDist < 0.01f )
+                    flatDist = 0.01f; // Avoid division by zero
+
+                // Desired geodesic distance on sphere (preserve flat distance)
+                const float d = flatDist; // e.g., 10
+                const float alpha = d / radius; // Angular distance from Shape 0 (at north pole)
+
+                // Direction in flat space (normalized)
+                const glm::vec3 flatDir = glm::normalize(coordinates);
+                const float flatTheta = atan2(coordinates.y, coordinates.x); // Azimuthal angle in flat plane
+                const float flatPhi = acos(glm::clamp(coordinates.z / flatDist, -1.0f, 1.0f)); // Polar angle
+
+                // New position: Place at angular distance alpha from (0, 0, R), preserve flat direction
+                // Spherical coordinates: theta = flatTheta, phi = alpha
+                const float phi = alpha; // Polar angle from north pole
+                const float theta = flatTheta; // Preserve azimuthal direction
+
                 return glm::vec3(
-                    radius * sin(theta1) * cos(phi1),
-                    radius * sin(theta1) * sin(phi1),
-                    radius * cos(theta1)
+                    radius * sin(phi) * cos(theta), // x
+                    radius * sin(phi) * sin(theta), // y
+                    radius * cos(phi)              // z
                 );
             }
             case GeometryType::Hyperbolic:
             {
-                const float k = radius * 2.0f;
-                const float z = (coordinates.x * coordinates.x - coordinates.y * coordinates.y) / k;
-                return glm::vec3(coordinates.x, coordinates.y, z);
+                // Assume hyperbolic plane in xy-plane, z as embedding height
+                // Map flat Euclidean distance to hyperbolic distance via Poincaré disk
+                float flatDist = glm::length(glm::vec2(coordinates.x, coordinates.y));
+                if ( flatDist < 0.01f )
+                    flatDist = 0.01f;
+
+                // Hyperbolic radius k (curvature scale, often radius-related)
+                const float k = radius; // Adjust based on your hyperbolic model
+                float hypDist = k * tanh(flatDist / k); // Approximate hyperbolic distance
+                if ( hypDist >= k ) // Cap at disk boundary
+                    hypDist = k * 0.999f;
+
+                // Direction preserved
+                const float theta = atan2(coordinates.y, coordinates.x);
+                return glm::vec3(
+                    hypDist * cos(theta), // x
+                    hypDist * sin(theta), // y
+                    0.0f                  // z (2D plane)
+                );
             }
             default:
                 return coordinates;
         }
     }
-    case GeometryType::Hyperbolic:
+    case GeometryType::Spherical:
     {
         switch ( end_type )
         {
             case GeometryType::Flat:
-                return glm::vec3(coordinates.x, coordinates.y, coordinates.z);
-            case GeometryType::Spherical:
-                return glm::vec3(coordinates.x, coordinates.y, coordinates.z);
+            {
+                // Spherical position assumed relative to (0, 0, R)
+                const glm::vec3 fromNorthPole = coordinates - glm::vec3(0, 0, radius);
+                float r = glm::length(fromNorthPole);
+                if ( r < 0.01f )
+                    r = 0.01f;
+
+                // Convert to spherical coordinates relative to north pole
+                const float phi = acos(glm::clamp(fromNorthPole.z / r, -1.0f, 1.0f)); // Angle from north pole
+                const float theta = atan2(fromNorthPole.y, fromNorthPole.x);
+
+                // Flat distance = arc length from (0, 0, R)
+                const float flatDist = radius * phi;
+                return glm::vec3(
+                    flatDist * sin(phi) * cos(theta), // Approximate flat projection
+                    flatDist * sin(phi) * sin(theta),
+                    flatDist * cos(phi)
+                );
+            }
             case GeometryType::Hyperbolic:
+            {
+                // Spherical to hyperbolic: Project onto xy-plane, convert arc length
+                const glm::vec3 fromNorthPole = coordinates - glm::vec3(0, 0, radius);
+                float r = glm::length(fromNorthPole);
+                if ( r < 0.01f )
+                    r = 0.01f;
+
+                const float phi = acos(glm::clamp(fromNorthPole.z / r, -1.0f, 1.0f));
+                const float theta = atan2(fromNorthPole.y, fromNorthPole.x);
+                const float arcDist = radius * phi; // Geodesic distance from north pole
+
+                const float k = radius;
+                float hypDist = k * tanh(arcDist / k); // Hyperbolic distance
+                if ( hypDist >= k )
+                    hypDist = k * 0.999f;
+
+                return glm::vec3(
+                    hypDist * cos(theta),
+                    hypDist * sin(theta),
+                    0.0f
+                );
+            }
+            default:
                 return coordinates;
         }
     }
@@ -699,13 +774,131 @@ glm::vec3 convertCoordinates(
     {
         switch ( end_type )
         {
+        case GeometryType::Flat:
+        {
+            // Hyperbolic (Poincaré disk) to flat: Approximate inverse hyperbolic map
+            float hypDist = glm::length(glm::vec2(coordinates.x, coordinates.y));
+            if ( hypDist < 0.01f )
+                hypDist = 0.01f;
+
+            const float k = radius;
+            const float flatDist = k * atanh(hypDist / k); // Inverse tanh to flat distance
+            const float theta = atan2(coordinates.y, coordinates.x);
+
+            return glm::vec3(
+                flatDist * cos(theta),
+                flatDist * sin(theta),
+                0.0f
+            );
+        }
         case GeometryType::Spherical:
-            return glm::vec3(coordinates.x, coordinates.y, coordinates.z);
-        case GeometryType::Hyperbolic:
-            return glm::vec3(coordinates.x, coordinates.y, coordinates.z);
+        {
+            // Hyperbolic to spherical: Map hyperbolic distance to arc length
+            float hypDist = glm::length(glm::vec2(coordinates.x, coordinates.y));
+            if ( hypDist < 0.01f )
+                hypDist = 0.01f;
+
+            const float k = radius;
+            const float flatDist = k * atanh(hypDist / k); // Convert to flat-like distance
+            float alpha = flatDist / radius; // Angular distance from (0, 0, R)
+            if ( alpha > M_PI )
+                alpha = M_PI;
+
+            const float theta = atan2(coordinates.y, coordinates.x);
+            const float phi = alpha;
+
+            return glm::vec3(
+                radius * sin(phi) * cos(theta),
+                radius * sin(phi) * sin(theta),
+                radius * cos(phi)
+            );
+        }
         default:
-            return coordinates;
+            return coordinates; // No conversion needed
         }
     }
     }
+}
+
+glm::vec3 convertVelocity(
+    const glm::vec3& oldPos,
+    const glm::vec3& oldVel,
+    GeometryType start_type,
+    GeometryType end_type,
+    float radius,
+    float dist,
+    float mu)
+{
+    if ( start_type == end_type )
+        return oldVel;
+
+    float vMag = glm::length(oldVel);
+    if ( vMag < 0.01f )
+        return glm::vec3(0.0f);
+
+    glm::vec3 tangent;
+    glm::vec3 newPos = convertCoordinates(oldPos, start_type, end_type, radius);
+
+    switch ( start_type )
+    {
+    case GeometryType::Flat:
+        switch ( end_type )
+        {
+            case GeometryType::Spherical:
+            {
+                // New position relative to Shape 0 at (0, 0, R)
+                glm::vec3 normal = glm::normalize(newPos - glm::vec3(0, 0, radius));
+                float theta = atan2(oldPos.y, oldPos.x);
+                tangent = glm::vec3(-sin(theta), cos(theta), 0); // theta-direction
+                float v_circ = sqrt(mu / dist); // Circular velocity at original distance
+                return v_circ * tangent;
+            }
+            case GeometryType::Hyperbolic:
+            {
+                float theta = atan2(oldPos.y, oldPos.x);
+                tangent = glm::vec3(-sin(theta), cos(theta), 0);
+                return vMag * tangent; // Preserve magnitude, adjust direction
+            }
+            default:
+                return oldVel;
+        }
+    case GeometryType::Spherical:
+        switch ( end_type )
+        {
+            case GeometryType::Flat:
+            {
+                glm::vec3 fromNorth = oldPos - glm::vec3(0, 0, radius);
+                float theta = atan2(fromNorth.y, fromNorth.x);
+                tangent = glm::vec3(-sin(theta), cos(theta), 0);
+                return vMag * tangent; // Approximate flat plane velocity
+            }
+            case GeometryType::Hyperbolic:
+            {
+                float theta = atan2(oldPos.y, oldPos.x);
+                tangent = glm::vec3(-sin(theta), cos(theta), 0);
+                return vMag * tangent;
+            }
+            default:
+                return oldVel;
+        }
+    case GeometryType::Hyperbolic:
+        switch ( end_type )
+        {
+            case GeometryType::Flat:
+                return oldVel; // Already in xy-plane, preserve
+            case GeometryType::Spherical:
+            {
+                glm::vec3 normal = glm::normalize(newPos - glm::vec3(0, 0, radius));
+                float theta = atan2(oldPos.y, oldPos.x);
+                tangent = glm::vec3(-sin(theta), cos(theta), 0);
+                float v_circ = sqrt(mu / dist);
+                return v_circ * tangent;
+            }
+            default:
+                return oldVel;
+        }
+    default:
+        return oldVel;
+    }
+    return glm::vec3(0.0f); // Fallback
 }

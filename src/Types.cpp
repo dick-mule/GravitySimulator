@@ -47,6 +47,7 @@ std::atomic<int> Shape::s_NumShapes = 0;
 Shape::Shape(const Object& object)
     : m_Object(object)
     , m_MyId(-1)
+    , m_Size(1.0f)
 {
     m_MyId = ++s_NumShapes;
 }
@@ -60,14 +61,14 @@ void Cube::addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& ind
 {
     uint32_t cubeVertexOffset = static_cast<uint32_t>(vertices.size());
     std::array<glm::vec3, 8> cubePositions = {
-        glm::vec3(-m_CubeSize / 2, -m_CubeSize / 2, -m_CubeSize / 2), // 0: Bottom-left-front
-        glm::vec3(m_CubeSize / 2, -m_CubeSize / 2, -m_CubeSize / 2),  // 1: Bottom-right-front
-        glm::vec3(m_CubeSize / 2, m_CubeSize / 2, -m_CubeSize / 2),   // 2: Top-right-front
-        glm::vec3(-m_CubeSize / 2, m_CubeSize / 2, -m_CubeSize / 2),  // 3: Top-left-front
-        glm::vec3(-m_CubeSize / 2, -m_CubeSize / 2, m_CubeSize / 2),  // 4: Bottom-left-back
-        glm::vec3(m_CubeSize / 2, -m_CubeSize / 2, m_CubeSize / 2),   // 5: Bottom-right-back
-        glm::vec3(m_CubeSize / 2, m_CubeSize / 2, m_CubeSize / 2),    // 6: Top-right-back
-        glm::vec3(-m_CubeSize / 2, m_CubeSize / 2, m_CubeSize / 2)    // 7: Top-left-back
+        glm::vec3(-m_Size / 2, -m_Size / 2, -m_Size / 2), // 0: Bottom-left-front
+        glm::vec3(m_Size / 2, -m_Size / 2, -m_Size / 2),  // 1: Bottom-right-front
+        glm::vec3(m_Size / 2, m_Size / 2, -m_Size / 2),   // 2: Top-right-front
+        glm::vec3(-m_Size / 2, m_Size / 2, -m_Size / 2),  // 3: Top-left-front
+        glm::vec3(-m_Size / 2, -m_Size / 2, m_Size / 2),  // 4: Bottom-left-back
+        glm::vec3(m_Size / 2, -m_Size / 2, m_Size / 2),   // 5: Bottom-right-back
+        glm::vec3(m_Size / 2, m_Size / 2, m_Size / 2),    // 6: Top-right-back
+        glm::vec3(-m_Size / 2, m_Size / 2, m_Size / 2)    // 7: Top-left-back
     };
 
     // Add cube indices (2 triangles per face, 6 faces)
@@ -130,9 +131,9 @@ void Sphere::addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& i
 
             Vertex vertex{};
             vertex.position = glm::vec3(
-                m_Radius * sinPhi * cosTheta,
-                m_Radius * cosPhi,
-                m_Radius * sinPhi * sinTheta
+                m_Size * sinPhi * cosTheta,
+                m_Size * cosPhi,
+                m_Size * sinPhi * sinTheta
             );
             vertex.color = glm::vec3(1.0f, 0.0f, 0.0f); // Red sphere
             vertex.normal = glm::normalize(vertex.position); // Normal is the position normalized
