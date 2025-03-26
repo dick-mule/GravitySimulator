@@ -622,8 +622,8 @@ glm::vec3 convertCoordinates(
         }
         case GeometryType::Spherical:
         {
-            const auto flatcoords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius, geometry);
-            return convertCoordinates(flatcoords, GeometryType::Flat, end_type, radius);
+            const auto flatCoords = convertCoordinates(coordinates, start_type, GeometryType::Flat, radius, geometry);
+            return convertCoordinates(flatCoords, GeometryType::Flat, end_type, radius);
         }
         default:
             return coordinates; // No conversion needed
@@ -728,8 +728,9 @@ glm::vec3 convertVelocity(
             }
             case GeometryType::Hyperbolic:
             {
-                const auto convertedVel = convertVelocity(oldVel, oldVel, start_type, GeometryType::Flat, radius, dist, mu);
-                return convertVelocity(convertedVel, oldVel, GeometryType::Flat, end_type, radius, dist, mu);
+                    const auto convertedFlatCoord = convertCoordinates(oldPos, start_type, GeometryType::Flat, radius, calculator);
+                    const auto convertedFlat = convertVelocity(oldPos, oldVel, start_type, GeometryType::Flat, radius, dist, mu);
+                    return convertVelocity(convertedFlatCoord, convertedFlat, GeometryType::Flat, end_type, radius, dist, mu);
             }
             default:
                 return oldVel;
@@ -756,8 +757,9 @@ glm::vec3 convertVelocity(
             }
             case GeometryType::Spherical:
             {
+                const auto convertedFlatCoord = convertCoordinates(oldPos, start_type, GeometryType::Flat, radius, calculator);
                 const auto convertedFlat = convertVelocity(oldPos, oldVel, start_type, GeometryType::Flat, radius, dist, mu);
-                return convertVelocity(convertedFlat, oldVel, GeometryType::Flat, end_type, radius, dist, mu);
+                return convertVelocity(convertedFlatCoord, convertedFlat, GeometryType::Flat, end_type, radius, dist, mu);
             }
             default:
                 return oldVel;
