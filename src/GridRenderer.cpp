@@ -71,7 +71,7 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 20; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
@@ -117,7 +117,7 @@ GridRenderer::GridRenderer(
             << " Vel: " << vecToString(obj->m_Object.velocity) << " / " << v << "\n";
     }
 
-    m_WarpStrength = m_Gravity * m_GridScale / m_GridSize; // Scales with mass
+    m_WarpStrength = 0.1 / sqrt(centralMass / 1000.0); // Scales with mass
     m_Geometry->setWarpStrength(m_WarpStrength);
 
     // Initialize trails
@@ -752,7 +752,7 @@ void GridRenderer::updateCamera()
     if ( io.MouseWheel != 0.0f )
     {
         m_ZoomLevel -= io.MouseWheel * 0.1f;
-        m_ZoomLevel = std::max(0.1f, std::min(m_ZoomLevel, 10.0f));
+        m_ZoomLevel = std::max(0.1f, std::min(m_ZoomLevel, 30.0f));
     }
 
     // Adjust radius with zoom level
@@ -833,7 +833,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();

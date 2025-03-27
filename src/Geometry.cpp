@@ -120,11 +120,13 @@ void FlatGeometry::warpGrid(
                 continue;
             const float dist = computeDistance(vertex.position, obj->m_Object.position);
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            // Logarithmic scaling
             potential -= mass / softenedDist; // Gravitational potential
         }
 
         // Base displacement from potential
         float displacement = -potential * m_WarpStrength; // Negative potential -> downward displacement
+        // displacement = maxDisplacement * (1.0f / (1 + exp(-displacement / maxDisplacement)) - 0.5);
 
         // Cap the displacement
         displacement = std::min(displacement, maxDisplacement);
@@ -161,8 +163,8 @@ void SphericalGeometry::generateGrid(
             Vertex vertex{};
             vertex.position = glm::vec3(
                 R * sin(theta) * cos(phi),
-                R * sin(theta) * sin(phi),
-                R * cos(theta)
+                R * cos(theta),
+                R * sin(theta) * sin(phi)
             );
             vertex.color = glm::vec3(1.0f);
             vertex.normal = glm::normalize(vertex.position);
@@ -225,9 +227,9 @@ float SphericalGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3&
     const float theta2 = atan2(pos2.z, pos2.x);
     const float phi2 = acos(glm::clamp(pos2.y / r2, -1.0f, 1.0f));
 
-    const float dtheta = theta2 - theta1;
-    const float dphi = phi2 - phi1;
-    float angularDist = sqrt(dtheta * dtheta + dphi * dphi);
+    const float d_theta = theta2 - theta1;
+    const float d_phi = phi2 - phi1;
+    float angularDist = sqrt(d_theta * d_theta + d_phi * d_phi);
     if ( angularDist < 0.01f )
     {
         // std::cout << "Warning: Small angular distance - dtheta: " << dtheta << ", dphi: " << dphi << ", angularDist: " << angularDist << std::endl;
@@ -296,12 +298,12 @@ void SphericalGeometry::warpGrid(
     std::vector<uint32_t> dummyIndices;
     generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
 
-    glm::vec3 centerOfMass(0.0f);
-    float totalMass = 0.0f;
     float maxMass = 0.0;
+    float totalMass = 0.0f;
+    glm::vec3 centerOfMass(0.0f);
     for ( auto& shape : massiveObjects )
     {
-        float mass = shape->m_Object.mass;
+        const float mass = shape->m_Object.mass;
         if ( mass <= 0.0f )
             continue;
         if ( mass > maxMass )
@@ -315,6 +317,9 @@ void SphericalGeometry::warpGrid(
     static float time = 0.0f;
     time += 0.016f;
     softeningLength = std::max(softeningLength, 10.0f);
+    const float baseRadius = m_GridScale / 2.0f;
+    // Use the base radius of the sphere for scaling
+    const float R = m_GridScale / 2.0f; // e.g., 125
 
     for ( Vertex& vertex : baseVertices )
     {
@@ -324,18 +329,41 @@ void SphericalGeometry::warpGrid(
             const float mass = obj->m_Object.mass;
             if ( mass <= 0.0f )
                 continue;
-            const float dist = computeDistance(vertex.position, obj->m_Object.position);
+            const float r1 = glm::length(vertex.position);
+            const float r2 = glm::length(obj->m_Object.position);
+            if ( r1 < 0.01f || r2 < 0.01f )
+                continue;
+
+            // Project points onto the sphere of radius R (or use their normalized directions)
+            glm::vec3 norm1 = vertex.position / r1; // Unit vector in direction of pos1
+            glm::vec3 norm2 = obj->m_Object.position / r2; // Unit vector in direction of pos2
+
+            // Compute the central angle using the dot product
+            float cosSigma = glm::dot(norm1, norm2);
+            cosSigma = glm::clamp(cosSigma, -1.0f, 1.0f); // Avoid numerical errors
+            float sigma = acos(cosSigma);
+
+            // Geodesic distance on a sphere of radius R
+            float dist = R * sigma;
+            if ( dist < 0.01f )
+                dist = 0.01f;
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= std::log(1 + mass / softenedDist); // Gravitational potential
+            potential -= mass / softenedDist; // Gravitational potential
         }
 
-        float displacement = -potential * m_WarpStrength;
-
+        float displacement = -potential * m_WarpStrength / 10.0f;
         displacement = std::min(displacement, maxDisplacement);
         displacement = std::max(displacement, -maxDisplacement);
 
-        vertex.position -= displacement * glm::normalize(vertex.position); // Displace along normal (outward for negative potential)
-        vertex.normal = glm::normalize(vertex.position);
+        // Displace along the radial direction
+        // vertex.position is already on the sphere of radius R, as generated
+        glm::vec3 radialDir = glm::normalize(vertex.position); // Matches vertex.normal from generation
+        // Reduce the radius by the displacement (inward dip)
+        float newRadius = std::max(R - displacement, 0.5f * R);
+        // newRadius = glm::max(newRadius, 0.1f * baseRadius); // Prevent collapsing to center
+        vertex.position = radialDir * newRadius;
+
+        // vertex.normal = glm::normalize(vertex.position);
     }
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
@@ -491,14 +519,13 @@ void HyperbolicGeometry::warpGrid(
             potential -= mass / softenedDist; // Gravitational potential
         }
 
-        float displacement = -potential * m_WarpStrength;
-
+        float displacement = -potential * m_WarpStrength / 50.f;
         displacement = std::min(displacement, maxDisplacement);
         displacement = std::max(displacement, -maxDisplacement);
 
         // Compute the normal to the hyperbolic surface z = (x^2 - y^2) / k
-        float x = vertex.position.x; // remember to graphics adjust y <-> z
-        float z = vertex.position.z; // remember to graphics adjust y <-> z
+        const float x = vertex.position.x; // remember to graphics adjust y <-> z
+        const float z = vertex.position.z; // remember to graphics adjust y <-> z
         glm::vec3 normal(-2.0f * x / k, 1.0f, 2.0f * z / k);
         normal = glm::normalize(normal);
 
@@ -506,10 +533,10 @@ void HyperbolicGeometry::warpGrid(
         vertex.position -= displacement * normal;
 
         // Update the normal after displacement
-        x = vertex.position.x;
-        z = vertex.position.z;
-        normal = glm::vec3(-2.0f * x / k, 1.0f, 2.0f * z / k);
-        vertex.normal = glm::normalize(normal);
+        // x = vertex.position.x;
+        // z = vertex.position.z;
+        // normal = glm::vec3(-2.0f * x / k, 1.0f, 2.0f * z / k);
+        // vertex.normal = glm::normalize(normal);
     }
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
