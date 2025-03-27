@@ -71,7 +71,7 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 1; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 20; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
@@ -542,16 +542,31 @@ void GridRenderer::updateGeometry(GeometryType type)
             glm::vec3 oldPos = obj.position; // Use position field directly
             glm::vec3 oldVel = obj.velocity;
 
-            glm::vec3 newPos = convertCoordinates(oldPos, m_CurrentGeometryType, type, R, m_Geometry);
-            glm::vec3 newVel = convertVelocity(oldPos, oldVel, m_CurrentGeometryType, type, R, dist, mu, m_Geometry);
+            const glm::vec3 newPos = convertCoordinates(
+                oldPos,
+                m_CurrentGeometryType,
+                type,
+                R,
+                m_Geometry);
+            const glm::vec3 newVel = convertVelocity(
+                oldPos,
+                oldVel,
+                m_CurrentGeometryType,
+                type,
+                R,
+                dist,
+                mu,
+                m_Geometry);
             obj.position = newPos;
             obj.modelMatrix = glm::translate(glm::mat4(1.0f), newPos);
             obj.velocity = newVel;
             obj.acceleration = glm::vec3(0, 0, 0);
+            const float r = glm::length(obj.position);
             std::cout << "Object at (" << oldPos.x << ", " << oldPos.y << ", " << oldPos.z
                       << ") -> (" << newPos.x << ", " << newPos.y << ", " << newPos.z
                       << "), Vel (" << oldVel.x << ", " << oldVel.y << ", " << oldVel.z
-                      << ") -> (" << newVel.x << ", " << newVel.y << ", " << newVel.z << ")\n";
+                      << ") -> (" << newVel.x << ", " << newVel.y << ", " << newVel.z << ")"
+                      << " w radius = " << r << "\n";
         }
 
         // Step 4: Update grid and buffers
@@ -818,7 +833,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
@@ -843,7 +858,7 @@ void GridRenderer::updateGrid()
 void GridRenderer::updateSimulation(float deltaTime)
 {
     // return;
-    // if ( firstFrame > 100 )
+    // if ( firstFrame > 10 )
     //     return;
 
     const float R = m_GridScale / 2.0f;
@@ -876,30 +891,37 @@ void GridRenderer::updateSimulation(float deltaTime)
             if ( m_CurrentGeometryType == GeometryType::Spherical )
             {
                 const glm::vec3 pole(0.0, R, 0.0);
-                const float r1 = glm::length(pos1 - pole);
-                const float r2 = glm::length(pos2 - pole);
                 // Chord direction (straight line in 3D space)
                 glm::vec3 r = pos2 - pos1;
                 float chordDist = glm::length(r);
                 if ( chordDist < 0.01f )
                     continue;
 
+                // Compute geodesic distance
+                float centralAngle = acos(glm::dot(glm::normalize(pos1), glm::normalize(pos2)));
+                dist = R * centralAngle; // Geodesic distance
+                if ( dist < 0.01f )
+                    dist = 0.01f;
+
+                // Force direction
                 direction = glm::normalize(r);
-                // Project direction onto tangent plane at pos1 (for shape1)
-                glm::vec3 normal1 = glm::normalize(pos1 - pole);
+                glm::vec3 og_dir = direction;
+
+                // Project direction onto tangent plane at pos1 (relative to center)
+                glm::vec3 normal1 = glm::normalize(pos1);
                 float radialComponent = glm::dot(direction, normal1);
+                if ( isnan(radialComponent) )
+                    radialComponent = 0.0f;
                 direction -= radialComponent * normal1;
                 if ( glm::length(direction) < 1e-6f )
                     continue;
                 direction = glm::normalize(direction);
-                // Use chord distance for force magnitude
-                // dist = chordDist; // Or float geoDist = m_Geometry->computeDistance(pos1, pos2) for geodesic
-                dist = m_Geometry->computeDistance(pos1, pos2);
 
                 // Debug
                 if ( firstFrame < 10 )
                     std::cout << "Spherical: r = " << vecToString(r) << ", direction = " << vecToString(direction)
-                        << ", normal2 = " << vecToString(normal1) << ", dist = " << dist << "\n";
+                              << ", og_dir = " << vecToString(og_dir) << ", normal2 = " << vecToString(normal1)
+                              << ", dist = " << dist << ", rad = " << radialComponent << "\n";
             }
             else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
             {
@@ -937,6 +959,8 @@ void GridRenderer::updateSimulation(float deltaTime)
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         auto& shape = m_MassiveObjects[i];
+        // if ( m_CurrentGeometryType == GeometryType::Spherical )
+        //     std::cout << "HERE" << std::endl;
         m_Geometry->updatePosition(shape->m_Object, deltaTime, R, false);
 
         if ( firstFrame < 10 )
@@ -944,7 +968,8 @@ void GridRenderer::updateSimulation(float deltaTime)
             std::cout << "Check Object[" << i << "] Values ...\n"
                       << "  Position: " << vecToString(shape->m_Object.position) << "\n"
                       << "  Velocity: " << vecToString(shape->m_Object.velocity) << "\n"
-                      << "  Acceleration: " << vecToString(shape->m_Object.acceleration) << "\n";
+                      << "  Acceleration: " << vecToString(shape->m_Object.acceleration) << "\n"
+                      << "  Radius: " << glm::length(shape->m_Object.position) << "\n";
         }
         // Add position to trail
         auto& [positions] = m_Trails[i];

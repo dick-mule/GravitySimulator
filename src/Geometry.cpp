@@ -255,32 +255,32 @@ void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radiu
     glm::vec3 normal = fromPole / r; // Unit normal (radial direction)
     // Project acceleration onto the tangent plane
     glm::vec3 accel = obj.acceleration;
-    float radialAccel = glm::dot(accel, normal);
-    accel -= radialAccel * normal; // Tangential acceleration only
+    // float radialAccel = glm::dot(accel, normal);
+    // accel -= radialAccel * normal; // Tangential acceleration only
 
     // Verlet half-step: Compute velocity at t + dt/2
     const glm::vec3 accelTerm = 0.5f * accel * deltaTime;
-    glm::vec3 halfV = obj.velocity + accelTerm;
+    glm::vec3 halfV = (obj.velocity + accelTerm) * deltaTime;
 
     // Update velocity to t + dt/2 (tangential)
-    float radialVel = glm::dot(halfV, normal);
-    halfV -= radialVel * normal;
-    obj.velocity = halfV;
+    // float radialVel = glm::dot(halfV, normal);
+    // halfV -= radialVel * normal;
+    obj.velocity += accelTerm;
 
     if ( apply_verlet_half )
     {
         // Update position using half-step velocity
-        glm::vec3 newPos = pos + halfV * deltaTime;
+        // glm::vec3 newPos = pos + halfV * deltaTime;
 
         // Enforce spherical constraint: Project onto sphere
-        // newPos = pole + glm::normalize(newPos - pole) * radius;
-        obj.position = newPos;
+        obj.position += halfV;
+        obj.position = glm::normalize(obj.position) * radius;
         obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
 
         // Recompute normal and ensure velocity remains tangential
-        normal = glm::normalize(newPos - pole);
-        radialVel = glm::dot(obj.velocity, normal);
-        obj.velocity -= radialVel * normal;
+        // normal = glm::normalize(newPos - pole);
+        // radialVel = glm::dot(obj.velocity, normal);
+        // obj.velocity -= radialVel * normal;
     }
 }
 
@@ -488,7 +488,7 @@ void HyperbolicGeometry::warpGrid(
             if ( dist >= std::numeric_limits<float>::max() )
                 continue; // Skip if distance computation failed
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= std::log(1 + mass / softenedDist); // Gravitational potential
+            potential -= mass / softenedDist; // Gravitational potential
         }
 
         float displacement = -potential * m_WarpStrength;
@@ -666,12 +666,12 @@ glm::vec3 convertVelocity(
 
                 // Tangent vectors
                 const glm::vec3 thetaTangent(-sin(theta), 0, cos(theta)); // Azimuthal
-                const glm::vec3 alphaTangent(cos(alpha) * cos(theta), -sin(alpha), cos(alpha) * sin(theta)); // Polar
+                const glm::vec3 alphaTangent(cos(alpha) * cos(theta), 0.0, cos(alpha) * sin(theta)); // Polar
 
                 // Project flat velocity onto spherical directions
                 const float vTheta = glm::dot(oldVel, thetaTangent); // Azimuthal component
                 const float vAlpha = glm::dot(oldVel, alphaTangent); // Polar component
-                const float vRadial = 0.0f; // oldVel.y; // y-velocity affects radial offset
+                const float vRadial = oldVel.y; // y-velocity affects radial offset
 
                 // Scale to preserve speed in tangential plane, add radial component
                 return vAlpha * alphaTangent + vTheta * thetaTangent + vRadial * glm::vec3(0, 1, 0);
