@@ -80,6 +80,7 @@ public:
     virtual std::string getName() const = 0;
     virtual void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) = 0;
     void setSize(float size) { m_Size = size; }
+    float getSize() const { return m_Size; }
 };
 
 class Cube final : public Shape

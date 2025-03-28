@@ -533,6 +533,8 @@ void GridRenderer::updateGeometry(GeometryType type)
 
         // Step 2: Update geometry factory
         m_Geometry = geometryFactory(type, m_GridSize, m_GridScale);
+        m_Geometry->setGridParams(m_GridSize, m_GridScale);
+        m_Geometry->setWarpStrength(m_WarpStrength);
         const float R = m_GridScale / 2.0f;
 
         // Step 3: Convert positions, velocities, and reset accelerations
@@ -570,6 +572,17 @@ void GridRenderer::updateGeometry(GeometryType type)
         }
 
         // Step 4: Update grid and buffers
+        for ( size_t i = 0; i < m_Trails.size(); ++i )
+        {
+            auto& [positions] = m_Trails[i];
+            for ( auto& pos : positions )
+                pos = convertCoordinates(
+                    pos,
+                    m_CurrentGeometryType,
+                    type,
+                    R,
+                    m_Geometry);
+        }
         m_CurrentGeometryType = type;
         generateGrid();
         createVertexBuffer();
@@ -833,7 +846,7 @@ void GridRenderer::updateGrid()
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
@@ -918,10 +931,10 @@ void GridRenderer::updateSimulation(float deltaTime)
                 direction = glm::normalize(direction);
 
                 // Debug
-                if ( firstFrame < 10 )
-                    std::cout << "Spherical: r = " << vecToString(r) << ", direction = " << vecToString(direction)
-                              << ", og_dir = " << vecToString(og_dir) << ", normal2 = " << vecToString(normal1)
-                              << ", dist = " << dist << ", rad = " << radialComponent << "\n";
+                // if ( firstFrame < 10 )
+                //     std::cout << "Spherical: r = " << vecToString(r) << ", direction = " << vecToString(direction)
+                //               << ", og_dir = " << vecToString(og_dir) << ", normal2 = " << vecToString(normal1)
+                //               << ", dist = " << dist << ", rad = " << radialComponent << "\n";
             }
             else if ( m_CurrentGeometryType == GeometryType::Hyperbolic )
             {
@@ -963,17 +976,17 @@ void GridRenderer::updateSimulation(float deltaTime)
         //     std::cout << "HERE" << std::endl;
         m_Geometry->updatePosition(shape->m_Object, deltaTime, R, false);
 
-        if ( firstFrame < 10 )
-        {
-            std::cout << "Check Object[" << i << "] Values ...\n"
-                      << "  Position: " << vecToString(shape->m_Object.position) << "\n"
-                      << "  Velocity: " << vecToString(shape->m_Object.velocity) << "\n"
-                      << "  Acceleration: " << vecToString(shape->m_Object.acceleration) << "\n"
-                      << "  Radius: " << glm::length(shape->m_Object.position) << "\n";
-        }
+        // if ( firstFrame < 10 )
+        // {
+        //     std::cout << "Check Object[" << i << "] Values ...\n"
+        //               << "  Position: " << vecToString(shape->m_Object.position) << "\n"
+        //               << "  Velocity: " << vecToString(shape->m_Object.velocity) << "\n"
+        //               << "  Acceleration: " << vecToString(shape->m_Object.acceleration) << "\n"
+        //               << "  Radius: " << glm::length(shape->m_Object.position) << "\n";
+        // }
         // Add position to trail
         auto& [positions] = m_Trails[i];
-        positions.push_back(shape->m_Object.modelMatrix[3]);
+        positions.push_back(shape->m_Object.position);
         if ( positions.size() > Trail::maxPoints )
             positions.pop_front();
     }
