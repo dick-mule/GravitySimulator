@@ -18,7 +18,7 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 36,
+				"line" : 40,
 				"parent" : 0
 			}
 		]
@@ -45,7 +45,10 @@
 			[
 				1,
 				2,
-				3
+				3,
+				4,
+				5,
+				6
 			]
 		}
 	],
@@ -66,6 +69,12 @@
 		{
 			"backtrace" : 0,
 			"isGenerated" : true,
+			"path" : "cmake-build-debug/flat_grid.comp.spv.rule",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
 			"path" : "cmake-build-debug/grid.frag.spv.rule",
 			"sourceGroupIndex" : 1
 		},
@@ -73,6 +82,18 @@
 			"backtrace" : 0,
 			"isGenerated" : true,
 			"path" : "cmake-build-debug/grid.vert.spv.rule",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "cmake-build-debug/hyperbolic_grid.comp.spv.rule",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "cmake-build-debug/spherical_grid.comp.spv.rule",
 			"sourceGroupIndex" : 1
 		}
 	],

@@ -32,7 +32,7 @@ private:
     vk::PhysicalDevice m_PhysicalDevice;
     vk::Device m_Device;
     vk::Queue m_GraphicsQueue;
-    vk::Queue m_PresentQueue;
+    vk::Queue m_PresentQueue, m_ComputeQueue;
     vk::SurfaceKHR m_Surface;
     vk::SwapchainKHR m_Swapchain;
     vk::Extent2D m_SwapchainExtent;
@@ -76,12 +76,14 @@ private:
     {
         uint32_t graphicsFamily = UINT32_MAX;
         uint32_t presentFamily = UINT32_MAX;
+        uint32_t computeFamily = UINT32_MAX;
 
         [[nodiscard]] bool isComplete() const
         {
-            return graphicsFamily != UINT32_MAX && presentFamily != UINT32_MAX;
+            return graphicsFamily != UINT32_MAX && presentFamily != UINT32_MAX && computeFamily != UINT32_MAX;
         }
     };
+
     QueueFamilyIndices findQueueFamilies(const vk::PhysicalDevice& device) const;
     bool isDeviceSuitable(const vk::PhysicalDevice& device) const;
 

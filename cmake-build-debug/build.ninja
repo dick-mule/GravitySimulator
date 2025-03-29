@@ -44,7 +44,7 @@ cmake_ninja_workdir = /Users/richardmule/CLionProjects/GravitySimulator/cmake-bu
 #############################################
 # Utility command for Shaders
 
-build Shaders: phony CMakeFiles/Shaders grid.frag.spv grid.vert.spv
+build Shaders: phony CMakeFiles/Shaders flat_grid.comp.spv grid.frag.spv grid.vert.spv hyperbolic_grid.comp.spv spherical_grid.comp.spv
 
 # =============================================================================
 # Object build statements for EXECUTABLE target GravitySimulator
@@ -146,6 +146,13 @@ build CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o: CXX_COMPILER__GravityS
   OBJECT_DIR = CMakeFiles/GravitySimulator.dir
   OBJECT_FILE_DIR = CMakeFiles/GravitySimulator.dir/src
 
+build CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o: CXX_COMPILER__GravitySimulator_unscanned_Debug /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ShaderLoader.cpp || cmake_object_order_depends_target_GravitySimulator
+  DEP_FILE = CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o.d
+  FLAGS = -g -std=gnu++2b -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk -fcolor-diagnostics
+  INCLUDES = -I/Users/richardmule/CLionProjects/GravitySimulator/src -I/Users/richardmule/CLionProjects/GravitySimulator/src/imgui -isystem /usr/local/include -isystem /opt/homebrew/include
+  OBJECT_DIR = CMakeFiles/GravitySimulator.dir
+  OBJECT_FILE_DIR = CMakeFiles/GravitySimulator.dir/src/utils
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target GravitySimulator
@@ -154,7 +161,7 @@ build CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o: CXX_COMPILER__GravityS
 #############################################
 # Link the executable GravitySimulator
 
-build GravitySimulator: CXX_EXECUTABLE_LINKER__GravitySimulator_Debug CMakeFiles/GravitySimulator.dir/src/main.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_draw.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_tables.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_widgets.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_demo.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_glfw.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_vulkan.cpp.o CMakeFiles/GravitySimulator.dir/src/VulkanApp.cpp.o CMakeFiles/GravitySimulator.dir/src/ImGuiHandler.cpp.o CMakeFiles/GravitySimulator.dir/src/GridRenderer.cpp.o CMakeFiles/GravitySimulator.dir/src/Types.cpp.o CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o | /opt/homebrew/lib/libglfw.3.4.dylib /usr/local/lib/libvulkan.dylib || Shaders
+build GravitySimulator: CXX_EXECUTABLE_LINKER__GravitySimulator_Debug CMakeFiles/GravitySimulator.dir/src/main.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_draw.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_tables.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_widgets.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/imgui_demo.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_glfw.cpp.o CMakeFiles/GravitySimulator.dir/src/imgui/backends/imgui_impl_vulkan.cpp.o CMakeFiles/GravitySimulator.dir/src/VulkanApp.cpp.o CMakeFiles/GravitySimulator.dir/src/ImGuiHandler.cpp.o CMakeFiles/GravitySimulator.dir/src/GridRenderer.cpp.o CMakeFiles/GravitySimulator.dir/src/Types.cpp.o CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o | /opt/homebrew/lib/libglfw.3.4.dylib /usr/local/lib/libvulkan.dylib || Shaders
   FLAGS = -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk
   LINK_LIBRARIES = -Wl,-rpath,/opt/homebrew/lib -Wl,-rpath,/usr/local/lib  /opt/homebrew/lib/libglfw.3.4.dylib  /usr/local/lib/libvulkan.dylib
   OBJECT_DIR = CMakeFiles/GravitySimulator.dir
@@ -190,7 +197,16 @@ build rebuild_cache: phony CMakeFiles/rebuild_cache.util
 #############################################
 # Phony custom command for CMakeFiles/Shaders
 
-build CMakeFiles/Shaders | ${cmake_ninja_workdir}CMakeFiles/Shaders: phony grid.frag.spv grid.vert.spv
+build CMakeFiles/Shaders | ${cmake_ninja_workdir}CMakeFiles/Shaders: phony flat_grid.comp.spv hyperbolic_grid.comp.spv spherical_grid.comp.spv grid.vert.spv grid.frag.spv
+
+
+#############################################
+# Custom command for flat_grid.comp.spv
+
+build flat_grid.comp.spv | ${cmake_ninja_workdir}flat_grid.comp.spv: CUSTOM_COMMAND /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/flat_grid.comp
+  COMMAND = cd /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug && /usr/local/bin/glslc /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/flat_grid.comp -o /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/flat_grid.comp.spv
+  DESC = Compiling shader flat_grid.comp
+  restat = 1
 
 
 #############################################
@@ -208,6 +224,24 @@ build grid.frag.spv | ${cmake_ninja_workdir}grid.frag.spv: CUSTOM_COMMAND /Users
 build grid.vert.spv | ${cmake_ninja_workdir}grid.vert.spv: CUSTOM_COMMAND /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/grid.vert
   COMMAND = cd /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug && /usr/local/bin/glslc /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/grid.vert -o /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/grid.vert.spv
   DESC = Compiling shader grid.vert
+  restat = 1
+
+
+#############################################
+# Custom command for hyperbolic_grid.comp.spv
+
+build hyperbolic_grid.comp.spv | ${cmake_ninja_workdir}hyperbolic_grid.comp.spv: CUSTOM_COMMAND /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/hyperbolic_grid.comp
+  COMMAND = cd /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug && /usr/local/bin/glslc /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/hyperbolic_grid.comp -o /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/hyperbolic_grid.comp.spv
+  DESC = Compiling shader hyperbolic_grid.comp
+  restat = 1
+
+
+#############################################
+# Custom command for spherical_grid.comp.spv
+
+build spherical_grid.comp.spv | ${cmake_ninja_workdir}spherical_grid.comp.spv: CUSTOM_COMMAND /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/spherical_grid.comp
+  COMMAND = cd /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug && /usr/local/bin/glslc /Users/richardmule/CLionProjects/GravitySimulator/src/shaders/spherical_grid.comp -o /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/spherical_grid.comp.spv
+  DESC = Compiling shader spherical_grid.comp
   restat = 1
 
 # =============================================================================

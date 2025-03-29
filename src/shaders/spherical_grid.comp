@@ -1,0 +1,84 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+struct Vertex {
+    vec4 position;
+    vec4 normal;
+    vec4 color;
+};
+
+layout(std430, binding = 0) buffer VertexBuffer {
+    Vertex vertices[];
+};
+
+layout(std430, binding = 1) buffer IndexBuffer {
+    uint indices[];
+};
+
+layout(push_constant) uniform PushConstants {
+    int uGridSize;
+    float uScale;
+} pc;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+
+    // Vertex generation for a spherical grid
+    uint idx = i * (pc.uGridSize + 1) + j;
+    if ( i <= pc.uGridSize && j <= pc.uGridSize )
+    {
+        // Spherical coordinates: theta (latitude), phi (longitude)
+        float theta = (float(i) / float(pc.uGridSize)) * 3.14159265359; // 0 to pi
+        float phi = (float(j) / float(pc.uGridSize)) * 2.0 * 3.14159265359; // 0 to 2pi
+        float radius = pc.uScale / 2.0; // Radius of the sphere
+
+        // Convert to Cartesian coordinates
+        float x = radius * sin(theta) * cos(phi);
+        float y = radius * cos(theta);
+        float z = radius * sin(theta) * sin(phi);
+
+        vertices[idx].position = vec4(x, y, z, 1.0f);
+        vertices[idx].normal = vec4(x / radius, y / radius, z / radius, 1.0f); // Normal points outward
+        vertices[idx].color = vec4(1.0f); // White
+    }
+
+    // Index generation for triangles
+    if ( i < pc.uGridSize && j < pc.uGridSize )
+    {
+        uint idx = i * (pc.uGridSize + 1) + j;
+        uint idxRight = idx + 1;
+        uint idxBottom = idx + (pc.uGridSize + 1);
+
+        // Horizontal lines
+        if ( i != 0 && i != pc.uGridSize - 1 )
+        {
+            if ( j == pc.uGridSize - 1 )
+            {
+                uint idxFirstInRow = i * (pc.uGridSize + 1);
+                uint offset = (i - 1) * pc.uGridSize * 2 + j * 2;
+                indices[offset] = idx;
+                indices[offset + 1] = idxFirstInRow;
+            }
+            else
+            {
+                uint offset = (i - 1) * pc.uGridSize * 2 + j * 2;
+                indices[offset] = idx;
+                indices[offset + 1] = idxRight;
+            }
+        }
+
+        // Vertical lines
+        if ( j != pc.uGridSize - 1 )
+        {
+            if ( i != 0 && i != pc.uGridSize - 1 )
+            {
+                uint offset = (pc.uGridSize - 2) * pc.uGridSize * 2 + j * (pc.uGridSize - 2) * 2 + (i - 1) * 2;
+                indices[offset] = idx;
+                indices[offset + 1] = idxBottom;
+            }
+        }
+    }
+}

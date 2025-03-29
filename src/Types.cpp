@@ -5,7 +5,7 @@
 #include "Types.hpp"
 
 
-vk::VertexInputBindingDescription Vertex::getBindingDescription()
+vk::VertexInputBindingDescription getBindingDescription()
 {
     vk::VertexInputBindingDescription bindingDescription{};
     bindingDescription.setBinding(0)
@@ -14,17 +14,12 @@ vk::VertexInputBindingDescription Vertex::getBindingDescription()
     return bindingDescription;
 }
 
-std::array<vk::VertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions()
+std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
 {
-    std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions{};
-    attributeDescriptions[0].setBinding(0)
-                            .setLocation(0)
-                            .setFormat(vk::Format::eR32G32B32Sfloat)
-                            .setOffset(offsetof(Vertex, position));
-    attributeDescriptions[1].setBinding(0)
-                            .setLocation(1)
-                            .setFormat(vk::Format::eR32G32B32Sfloat)
-                            .setOffset(offsetof(Vertex, color));
+    std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{};
+    attributeDescriptions[0].setBinding(0).setLocation(0).setFormat(vk::Format::eR32G32B32A32Sfloat).setOffset(0);  // position
+    attributeDescriptions[1].setBinding(0).setLocation(1).setFormat(vk::Format::eR32G32B32A32Sfloat).setOffset(16); // normal
+    attributeDescriptions[2].setBinding(0).setLocation(2).setFormat(vk::Format::eR32G32B32A32Sfloat).setOffset(32); // color
     return attributeDescriptions;
 }
 
@@ -59,7 +54,7 @@ Shape::~Shape()
 
 void Cube::addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
 {
-    uint32_t cubeVertexOffset = static_cast<uint32_t>(vertices.size());
+    const uint32_t cubeVertexOffset = static_cast<uint32_t>(vertices.size());
     std::array<glm::vec3, 8> cubePositions = {
         glm::vec3(-m_Size / 2, -m_Size / 2, -m_Size / 2), // 0: Bottom-left-front
         glm::vec3(m_Size / 2, -m_Size / 2, -m_Size / 2),  // 1: Bottom-right-front

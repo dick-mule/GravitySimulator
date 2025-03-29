@@ -177,21 +177,18 @@ bool VulkanApp::isDeviceSuitable(const vk::PhysicalDevice& device) const
 VulkanApp::QueueFamilyIndices VulkanApp::findQueueFamilies(const vk::PhysicalDevice& device) const
 {
     QueueFamilyIndices indices;
-
     const auto queueFamilies = device.getQueueFamilyProperties();
-
     uint32_t i = 0;
     for ( const auto& queueFamily : queueFamilies )
     {
         if ( queueFamily.queueFlags & vk::QueueFlagBits::eGraphics )
             indices.graphicsFamily = i;
-
         if ( device.getSurfaceSupportKHR(i, m_Surface) )
             indices.presentFamily = i;
-
+        if ( queueFamily.queueFlags & vk::QueueFlagBits::eCompute )
+            indices.computeFamily = i;
         if ( indices.isComplete() )
             break;
-
         ++i;
     }
 
@@ -200,11 +197,13 @@ VulkanApp::QueueFamilyIndices VulkanApp::findQueueFamilies(const vk::PhysicalDev
 
 void VulkanApp::createLogicalDevice()
 {
-    const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_PhysicalDevice);
-
+    const auto [
+        graphicsFamily,
+        presentFamily,
+        computeFamily
+    ] = findQueueFamilies(m_PhysicalDevice);
+    std::set<uint32_t> uniqueQueueFamilies = { graphicsFamily, presentFamily, computeFamily };
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
-    std::set<uint32_t> uniqueQueueFamilies = { graphicsFamily, presentFamily };
-
     constexpr float queuePriority = 1.0f;
     for ( uint32_t queueFamily : uniqueQueueFamilies )
     {
@@ -234,6 +233,7 @@ void VulkanApp::createLogicalDevice()
 
     m_GraphicsQueue = m_Device.getQueue(graphicsFamily, 0);
     m_PresentQueue = m_Device.getQueue(presentFamily, 0);
+    m_ComputeQueue = m_Device.getQueue(computeFamily, 0);  // New member
 }
 
 void VulkanApp::createSwapchain()
@@ -295,8 +295,12 @@ void VulkanApp::createSwapchain()
               .setImageArrayLayers(1)
               .setImageUsage(vk::ImageUsageFlagBits::eColorAttachment);
 
-    const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_PhysicalDevice);
-    const uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily };
+    const auto [
+        graphicsFamily,
+        presentFamily,
+        computeFamily
+    ] = findQueueFamilies(m_PhysicalDevice);
+    const uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily, computeFamily };
     if ( graphicsFamily != presentFamily )
     {
         createInfo.setImageSharingMode(vk::SharingMode::eConcurrent)
@@ -433,7 +437,11 @@ void VulkanApp::createFramebuffers()
 
 void VulkanApp::createCommandPool()
 {
-    const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_PhysicalDevice);
+    const auto [
+        graphicsFamily,
+        presentFamily,
+        computeFamily
+    ] = findQueueFamilies(m_PhysicalDevice);
 
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.setQueueFamilyIndex(graphicsFamily)
@@ -496,6 +504,7 @@ void VulkanApp::initGridRenderer()
         m_PhysicalDevice,
         m_CommandPool,
         m_GraphicsQueue,
+        m_ComputeQueue,
         m_RenderPass,
         m_SwapchainImages,
         m_SwapchainExtent,
@@ -543,8 +552,8 @@ void VulkanApp::mainLoop()
     double lastTime = glfwGetTime();
     while ( !glfwWindowShouldClose(m_Window) )
     {
-        double currentTime = glfwGetTime();
-        float deltaTime = static_cast<float>(currentTime - lastTime);
+        const double currentTime = glfwGetTime();
+        const float deltaTime = static_cast<float>(currentTime - lastTime);
         lastTime = currentTime;
         glfwPollEvents();
 
@@ -556,7 +565,7 @@ void VulkanApp::mainLoop()
 
         m_ImGuiHandler->newFrame();
         m_GridRenderer->updateCamera();
-        m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
+        // m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
         m_GridRenderer->updateGrid();
         m_GridRenderer->renderCameraControls();
         m_ImGuiHandler->renderUI();

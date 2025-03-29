@@ -3,50 +3,358 @@
 //
 
 #include "Geometry.hpp"
-
 #include <iostream>
+#include <ranges>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/fast_trigonometry.hpp>
+
+std::ostream& operator<<(std::ostream& os, const GeometryType& type)
+{
+    const char* geometryItems[] = {"Flat", "Spherical", "Hyperbolic"};
+    int currentGeometry = static_cast<int>(type);
+    os << geometryItems[currentGeometry];
+    return os;
+}
+
+GeometryShader::GeometryShader(const vk::Device& device, const vk::PhysicalDevice& physicalDevice)
+    : m_Device(device)
+    , m_PhysicalDevice(physicalDevice)
+{
+    initializeAll();
+}
+
+GeometryShader::~GeometryShader()
+{
+    for ( const auto& [vertexShader, fragmentShader] : m_ShaderPrograms | std::views::values )
+    {
+        m_Device.destroyShaderModule(vertexShader);
+        m_Device.destroyShaderModule(fragmentShader);
+    }
+}
+
+void GeometryShader::loadShader(const GeometryType type, const std::string& vertexPath, const std::string& fragmentPath)
+{
+    const std::vector<char> vertexCode = utils::readFile(vertexPath);
+    const std::vector<char> fragmentCode = utils::readFile(fragmentPath);
+
+    vk::ShaderModuleCreateInfo vertexInfo{};
+    vertexInfo.sType = vk::StructureType::eShaderModuleCreateInfo;
+    vertexInfo.codeSize = vertexCode.size();
+    vertexInfo.pCode = reinterpret_cast<const uint32_t*>(vertexCode.data());
+    const vk::ShaderModule vertexShader = m_Device.createShaderModule(vertexInfo);
+
+    vk::ShaderModuleCreateInfo fragmentInfo{};
+    fragmentInfo.sType = vk::StructureType::eShaderModuleCreateInfo;
+    fragmentInfo.codeSize = fragmentCode.size();
+    fragmentInfo.pCode = reinterpret_cast<const uint32_t*>(fragmentCode.data());
+    const vk::ShaderModule fragmentShader = m_Device.createShaderModule(fragmentInfo);
+
+    m_ShaderPrograms[type] = { vertexShader, fragmentShader };
+}
+
+void GeometryShader::initializeAll()
+{
+    loadShader(GeometryType::Flat, "flat_grid.comp.spv", "grid.frag.spv");
+    loadShader(GeometryType::Spherical, "spherical_grid.comp.spv", "grid.frag.spv");
+    loadShader(GeometryType::Hyperbolic, "hyperbolic_grid.comp.spv", "grid.frag.spv");
+}
+
+const ShaderProgram& GeometryShader::getShaderProgram(const GeometryType type) const
+{
+    const auto it = m_ShaderPrograms.find(type);
+    std::cout << "GETTING SHADER PROGRAM: " << type << std::endl;
+    if ( it != m_ShaderPrograms.end() )
+        return it->second;
+    throw std::runtime_error("Shader program not found for geometry type");
+}
+
+void GeometryShader::setGPUBuffers(
+    const vk::Buffer& vertexBuffer,
+    const vk::DeviceMemory& vertexBufferMemory,
+    const vk::Buffer& indexBuffer,
+    const vk::DeviceMemory& indexBufferMemory)
+{
+    m_VertexBuffer = vertexBuffer;
+    m_VertexBufferMemory = vertexBufferMemory;
+    m_IndexBuffer = indexBuffer;
+    m_IndexBufferMemory = indexBufferMemory;
+}
+
+void GeometryShader::setComputePipeline(
+    const vk::CommandPool& commandPool,
+    const vk::Queue& computeQueue,
+    const vk::Pipeline& pipeline,
+    const vk::PipelineLayout& pipelineLayout,
+    const vk::DescriptorSetLayout& descriptorSetLayout,
+    const vk::DescriptorSet& descriptorSet)
+{
+    m_CommandPool = commandPool;
+    m_ComputeQueue = computeQueue;
+    m_ComputePipeline = pipeline;
+    m_PipelineLayout = pipelineLayout;
+    m_DescriptorSetLayout = descriptorSetLayout;
+    m_DescriptorSet = descriptorSet;
+}
+
+vk::CommandBuffer GeometryShader::beginSingleTimeCommands() const
+{
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.commandPool = m_CommandPool;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandBufferCount = 1;
+
+    vk::CommandBuffer commandBuffer;
+    if ( m_Device.allocateCommandBuffers(&allocInfo, &commandBuffer) != vk::Result::eSuccess )
+        throw std::runtime_error("Failed to allocate single-time command buffer");
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    auto _ = commandBuffer.begin(&beginInfo);
+
+    return commandBuffer;
+}
+
+void GeometryShader::endSingleTimeCommands(vk::CommandBuffer commandBuffer) const
+{
+    commandBuffer.end();
+
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    auto _ = m_ComputeQueue.submit(1, &submitInfo, nullptr);
+    m_ComputeQueue.waitIdle(); // Sync for simplicity; use fences later
+
+    m_Device.freeCommandBuffers(m_CommandPool, 1, &commandBuffer);
+}
+
+void GeometryShader::dispatchComputeShader(const size_t gridSize, float gridScale) const
+{
+    // Create a command buffer
+    const vk::CommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    // Begin command buffer
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = vk::StructureType::eCommandBufferBeginInfo;
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    auto _ = commandBuffer.begin(&beginInfo);
+
+    // Bind the compute pipeline
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, m_ComputePipeline);
+
+    // Bind descriptor set
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute,
+        m_PipelineLayout,
+        0,
+        1,
+        &m_DescriptorSet,
+        0,
+        nullptr);
+
+    // Set push constants
+    commandBuffer.pushConstants(
+        m_PipelineLayout,
+        vk::ShaderStageFlagBits::eCompute,
+        0,
+        sizeof(int),
+        &gridSize);
+    commandBuffer.pushConstants(
+        m_PipelineLayout,
+        vk::ShaderStageFlagBits::eCompute,
+        sizeof(int),
+        sizeof(float),
+        &gridScale);
+
+    // Dispatch compute shader
+    constexpr uint32_t groupSize = 32;
+    const uint32_t groupsX = (gridSize + 1 + groupSize - 1) / groupSize; // 16
+    const uint32_t groupsY = (gridSize + 1 + groupSize - 1) / groupSize; // 16
+    commandBuffer.dispatch(groupsX, groupsY, 1);
+    // commandBuffer.dispatch(gridSize + 1, gridSize  + 1, 1);
+
+    // End command buffer
+    commandBuffer.end();
+
+    // Submit to queue
+    vk::SubmitInfo submitInfo{};
+    submitInfo.sType = vk::StructureType::eSubmitInfo;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    _ = m_ComputeQueue.submit(1, &submitInfo, nullptr);
+    m_ComputeQueue.waitIdle(); // Wait for completion (for simplicity; use fences in production)
+
+    // Free command buffer
+    m_Device.freeCommandBuffers(m_CommandPool, 1, &commandBuffer);
+}
+
+void GeometryShader::copyBuffersToCPU(
+    std::vector<Vertex>& vertices,
+    std::vector<uint32_t>& indices,
+    size_t vertexCount,
+    size_t indexCount) const
+{
+    // Resize the output vectors
+    vertices.resize(vertexCount);
+    indices.resize(indexCount);
+
+    std::cout << "CHECK SIZES: " << vertexCount << "/" << indexCount << "\n";
+    const vk::DeviceSize vertexBufferSize = sizeof(Vertex) * vertexCount; // Now 48 * 251001
+    vk::Buffer stagingBuffer = createBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferDst);
+    const vk::DeviceMemory stagingMemory = allocateBufferMemory(
+        stagingBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+    m_Device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
+
+    const vk::CommandBuffer cmd = beginSingleTimeCommands();
+    vk::BufferCopy copyRegion{};
+    copyRegion.setSize(vertexBufferSize);
+    cmd.copyBuffer(m_VertexBuffer, stagingBuffer, 1, &copyRegion);
+    endSingleTimeCommands(cmd);
+
+    void* vertexData;
+    auto _ = m_Device.mapMemory(stagingMemory, 0, vertexBufferSize, {}, &vertexData);
+    memcpy(vertices.data(), vertexData, vertexBufferSize);
+    m_Device.unmapMemory(stagingMemory);
+
+    m_Device.destroyBuffer(stagingBuffer);
+    m_Device.freeMemory(stagingMemory);
+
+    // Copy index buffer back to CPU
+    stagingBuffer = createBuffer(indexCount * sizeof(uint32_t), vk::BufferUsageFlagBits::eTransferDst);
+    const vk::DeviceMemory stagingBufferMemory = allocateBufferMemory(
+        stagingBuffer,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent);
+    m_Device.bindBufferMemory(stagingBuffer, stagingBufferMemory, 0);
+
+    copyBuffer(
+        m_Device,
+        m_CommandPool,
+        m_ComputeQueue,
+        m_IndexBuffer,
+        stagingBuffer,
+        indexCount * sizeof(uint32_t));
+
+    void* indexData;
+    _ = m_Device.mapMemory(stagingBufferMemory, 0, indexCount * sizeof(uint32_t), {}, &indexData);
+    memcpy(indices.data(), indexData, indexCount * sizeof(uint32_t));
+    m_Device.unmapMemory(stagingBufferMemory);
+
+    m_Device.destroyBuffer(stagingBuffer);
+    m_Device.freeMemory(stagingBufferMemory);
+}
+
+vk::Buffer GeometryShader::createBuffer(const vk::DeviceSize size, const vk::BufferUsageFlags usage) const
+{
+    vk::BufferCreateInfo bufferInfo{};
+    bufferInfo.sType = vk::StructureType::eBufferCreateInfo;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+    const vk::Buffer buffer = m_Device.createBuffer(bufferInfo);
+    if ( !buffer )
+        throw std::runtime_error("Failed to create buffer");
+    return buffer;
+}
+
+vk::DeviceMemory GeometryShader::allocateBufferMemory(
+    const vk::Buffer buffer,
+    const vk::MemoryPropertyFlags properties) const
+{
+    const vk::MemoryRequirements memRequirements = m_Device.getBufferMemoryRequirements(buffer);
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.sType = vk::StructureType::eMemoryAllocateInfo;
+    allocInfo.allocationSize = memRequirements.size;
+
+    // Find memory type
+    const vk::PhysicalDeviceMemoryProperties memProperties = m_PhysicalDevice.getMemoryProperties();
+    uint32_t memoryTypeIndex = -1;
+    for ( uint32_t i = 0; i < memProperties.memoryTypeCount; ++i )
+    {
+        if ( memRequirements.memoryTypeBits & 1 << i &&
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties )
+        {
+            memoryTypeIndex = i;
+            break;
+        }
+    }
+
+    if ( memoryTypeIndex == -1 )
+        throw std::runtime_error("Failed to find suitable memory type");
+
+    allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+    return m_Device.allocateMemory(allocInfo);
+}
+
+void GeometryShader::copyBuffer(
+    const vk::Device& device,
+    const vk::CommandPool& commandPool,
+    const vk::Queue& queue,
+    const vk::Buffer& srcBuffer,
+    const vk::Buffer& dstBuffer,
+    const vk::DeviceSize& size)
+{
+    // Create a command buffer
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = vk::StructureType::eCommandBufferAllocateInfo;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandBufferCount = 1;
+
+    vk::CommandBuffer commandBuffer;
+    auto _ = device.allocateCommandBuffers(&allocInfo, &commandBuffer);
+
+    // Begin command buffer
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = vk::StructureType::eCommandBufferBeginInfo;
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    _ = commandBuffer.begin(&beginInfo);
+
+    // Copy buffer
+    vk::BufferCopy copyRegion{};
+    copyRegion.size = size;
+    commandBuffer.copyBuffer(srcBuffer, dstBuffer, copyRegion);
+
+    // End command buffer
+    commandBuffer.end();
+
+    // Submit to queue
+    vk::SubmitInfo submitInfo{};
+    submitInfo.sType = vk::StructureType::eSubmitInfo;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    _ = queue.submit(1, &submitInfo, nullptr);
+    queue.waitIdle();
+
+    // Free command buffer
+    device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+}
 
 Geometry::Geometry(int grid_size, float grid_scale, float warp_strength)
     : m_GridSize(grid_size)
     , m_GridScale(grid_scale)
     , m_WarpStrength(warp_strength)
+    , m_Shader(nullptr)
 {
 }
 
-void FlatGeometry::generateGrid(
+void Geometry::generateGrid(
     std::vector<Vertex>& vertices,
     std::vector<uint32_t>& indices,
     uint32_t gridSize,
-    float scale)
+    float scale) const
 {
-    const float spacing = scale / gridSize;
-    for ( int i = 0; i <= gridSize; ++i )
-    {
-        for ( int j = 0; j <= gridSize; ++j )
-        {
-            Vertex vertex{};
-            vertex.position = glm::vec3(
-                i * spacing - gridSize * spacing / 2.0f,
-                0.0f,
-                j * spacing - gridSize * spacing / 2.0f
-            );
-            vertex.color = glm::vec3(1.0f);
-            vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
-            vertices.push_back(vertex);
-        }
-    }
+    // Copy data back to CPU for debugging (optional, remove in production)
+    const size_t vertex_count = vertexCount();
+    const size_t index_count = indexCount();
 
-    for ( int i = 0; i < gridSize; ++i )
-    {
-        for ( int j = 0; j < gridSize; ++j )
-        {
-            uint32_t idx = i * (gridSize + 1) + j;
-            indices.push_back(idx); indices.push_back(idx + 1);
-            indices.push_back(idx); indices.push_back(idx + (gridSize + 1));
-        }
-    }
+    vertices.resize(vertex_count);
+    indices.resize(index_count);
+
+    // Dispatch the compute shader to generate the grid on the GPU
+    m_Shader->dispatchComputeShader(gridSize, scale);
+    m_Shader->copyBuffersToCPU(vertices, indices, vertex_count, index_count);
 }
 
 float FlatGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const
@@ -141,74 +449,6 @@ void FlatGeometry::warpGrid(
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
         vertices[i] = baseVertices[i];
-
-}
-
-void SphericalGeometry::generateGrid(
-    std::vector<Vertex>& vertices,
-    std::vector<uint32_t>& indices,
-    uint32_t gridSize,
-    float scale)
-{
-    constexpr float pi = glm::pi<float>();
-    const float R = scale / 2.0f;
-
-    // Generate vertices
-    for ( int i = 0; i <= gridSize; ++i )
-    {
-        const float theta = pi * i / gridSize;
-        for ( int j = 0; j <= gridSize; ++j )
-        {
-            const float phi = 2.0f * pi * j / gridSize;
-            Vertex vertex{};
-            vertex.position = glm::vec3(
-                R * sin(theta) * cos(phi),
-                R * cos(theta),
-                R * sin(theta) * sin(phi)
-            );
-            vertex.color = glm::vec3(1.0f);
-            vertex.normal = glm::normalize(vertex.position);
-            vertices.push_back(vertex);
-        }
-    }
-
-    // Generate indices as lines
-    for ( int i = 0; i < gridSize; ++i )
-    {
-        for ( int j = 0; j < gridSize; ++j )
-        {
-            uint32_t idx = i * (gridSize + 1) + j;
-            uint32_t idxRight = idx + 1;
-            uint32_t idxBottom = idx + (gridSize + 1);
-
-            // Horizontal lines (constant theta, varying phi) - latitude
-            if ( i != 0 && i != gridSize - 1 ) // Skip poles
-            {
-                if ( j == gridSize - 1 )
-                {
-                    uint32_t idxFirstInRow = i * (gridSize + 1);
-                    indices.push_back(idx);
-                    indices.push_back(idxFirstInRow);
-                }
-                else
-                {
-                    indices.push_back(idx);
-                    indices.push_back(idxRight);
-                }
-            }
-
-            // Vertical lines (constant phi, varying theta) - longitude
-            if ( j != gridSize - 1 ) // Skip the last column
-            {
-                // Only draw vertical lines between non-pole vertices
-                if (i != 0 && i != gridSize - 1)
-                {
-                    indices.push_back(idx);
-                    indices.push_back(idxBottom);
-                }
-            }
-        }
-    }
 
 }
 
@@ -362,58 +602,6 @@ void SphericalGeometry::warpGrid(
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )
         vertices[i] = baseVertices[i];
-}
-
-void HyperbolicGeometry::generateGrid(
-    std::vector<Vertex>& vertices,
-    std::vector<uint32_t>& indices,
-    uint32_t gridSize,
-    float scale)
-{
-    // Generate vertices
-    for ( int i = 0; i <= gridSize; ++i )
-    {
-        for ( int j = 0; j <= gridSize; ++j )
-        {
-            Vertex vertex{};
-            // RECALL y <-> z for graphics, comments will show x, y, z standard formulas but graphics switches y/z!
-            // Map i, j to x, y coordinates in the range [-scale/2, scale/2]
-            const float x = (static_cast<float>(i) / gridSize - 0.5f) * scale;
-            const float z = (static_cast<float>(j) / gridSize - 0.5f) * scale;
-            // Hyperbolic paraboloid: z = (x^2 - y^2) / k  <- not using graphics coordinates
-            const float k = scale; // Adjust this to control curvature (smaller k = more pronounced saddle)
-            const float y = (x * x - z * z) / k;
-            vertex.position = glm::vec3(x, y, z);
-            vertex.color = glm::vec3(1.0f);
-
-            // Compute the normal (partial derivatives of z = (x^2 - y^2) / k)
-            const float dy_dx = 2.0f * x / k; // ∂y/∂x = 2x/k <- Graphics adjusted
-            const float dy_dz = -2.0f * z / k; // ∂y/∂z = -2z/k <- Graphics adjusted
-            const auto tangent_x = glm::vec3(1.0f, 0.0f, dy_dx);
-            const auto tangent_y = glm::vec3(0.0f, 1.0f, dy_dz);
-            vertex.normal = glm::normalize(glm::cross(tangent_y, tangent_x)); // Normal is cross product of tangents
-            vertices.push_back(vertex);
-        }
-    }
-
-    // Generate indices as lines
-    for ( int i = 0; i < gridSize; ++i )
-    {
-        for ( int j = 0; j < gridSize; ++j )
-        {
-            uint32_t idx = i * (gridSize + 1) + j;
-            uint32_t idxRight = idx + 1;
-            uint32_t idxBottom = idx + (gridSize + 1);
-
-            // Horizontal line (constant i, varying j)
-            indices.push_back(idx);
-            indices.push_back(idxRight);
-
-            // Vertical line (constant j, varying i)
-            indices.push_back(idx);
-            indices.push_back(idxBottom);
-        }
-    }
 }
 
 float HyperbolicGeometry::computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const

@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <vulkan/vulkan.hpp>
-#include <vector>
 #include <memory>
 
 #include "Geometry.hpp"
@@ -20,6 +18,7 @@ public:
         const vk::PhysicalDevice& physicalDevice,
         const vk::CommandPool& commandPool,
         const vk::Queue& graphicsQueue,
+        const vk::Queue& computeQueue,
         const vk::RenderPass& renderPass,
         const std::vector<vk::Image>& swapchainImages,
         const vk::Extent2D& swapchainExtent,
@@ -33,19 +32,28 @@ public:
     void updateSimulation(float deltaTime);
     void renderCameraControls();
     void createDepthResources();
+    void createComputePipeline();
     vk::Format getDepthFormat() const { return m_DepthFormat; }
     const std::vector<vk::ImageView>& getDepthImageViews() const { return m_DepthImageViews; }
 
 private:
     std::shared_ptr<Geometry> m_Geometry;
+    std::shared_ptr<GeometryShader> m_ShaderManager;
     GeometryType m_CurrentGeometryType;
     vk::Device m_Device;
     vk::PhysicalDevice m_PhysicalDevice;
     vk::CommandPool m_CommandPool;
-    vk::Queue m_GraphicsQueue;
+    vk::Queue m_GraphicsQueue, m_ComputeQueue;
     vk::RenderPass m_RenderPass;
     std::vector<vk::Image> m_SwapchainImages;
     vk::Extent2D m_SwapchainExtent;
+
+    // Compute pipeline resources
+    vk::Pipeline m_ComputePipeline;
+    vk::PipelineLayout m_ComputePipelineLayout;
+    vk::DescriptorSetLayout m_ComputeDescriptorSetLayout;
+    vk::DescriptorPool m_ComputeDescriptorPool;
+    vk::DescriptorSet m_ComputeDescriptorSet;
 
     std::vector<Vertex> m_Vertices;
     std::vector<uint32_t> m_Indices;
@@ -87,6 +95,7 @@ private:
     vk::DeviceMemory m_TrailVertexBufferMemory;
     vk::Buffer m_TrailIndexBuffer;
     vk::DeviceMemory m_TrailIndexBufferMemory;
+    vk::Fence m_TrailUpdateFence;
 
     void generateGrid();
     void createVertexBuffer();
@@ -98,7 +107,7 @@ private:
 
     vk::Buffer createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const;
     vk::DeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
-    void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
+    void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) const;
     vk::CommandBuffer beginSingleTimeCommands() const;
     void endSingleTimeCommands(vk::CommandBuffer commandBuffer) const;
 

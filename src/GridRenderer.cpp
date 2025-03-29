@@ -8,18 +8,6 @@
 #include <iostream>
 #include <imgui.h>
 
-static std::vector<char> readFile(const std::string& fileName)
-{
-    std::ifstream file(fileName, std::ios::ate | std::ios::binary);
-    if ( !file.is_open() )
-        throw std::runtime_error("Failed to open " + fileName);
-    const size_t fileSize = file.tellg();
-    std::vector<char> shaderCode(fileSize);
-    file.seekg(0);
-    file.read(shaderCode.data(), fileSize);
-    file.close();
-    return shaderCode;
-}
 
 static std::string vecToString(const glm::vec3& vec)
 {
@@ -35,16 +23,19 @@ GridRenderer::GridRenderer(
     const vk::PhysicalDevice& physicalDevice,
     const vk::CommandPool& commandPool,
     const vk::Queue& graphicsQueue,
+    const vk::Queue& computeQueue,
     const vk::RenderPass& renderPass,
     const std::vector<vk::Image>& swapchainImages,
     const vk::Extent2D& swapchainExtent,
     GeometryType geometryType)
-    : m_Geometry(geometryFactory(geometryType, m_GridSize, m_GridScale))
+    : m_Geometry(nullptr)
+    , m_ShaderManager(std::make_shared<GeometryShader>(device, physicalDevice))
     , m_CurrentGeometryType(geometryType)
     , m_Device(device)
     , m_PhysicalDevice(physicalDevice)
     , m_CommandPool(commandPool)
     , m_GraphicsQueue(graphicsQueue)
+    , m_ComputeQueue(computeQueue)  // Set here
     , m_RenderPass(renderPass)
     , m_SwapchainImages(swapchainImages)
     , m_SwapchainExtent(swapchainExtent)
@@ -61,6 +52,7 @@ GridRenderer::GridRenderer(
     , m_GridObject()
 {
     m_Geometry = geometryFactory(geometryType, m_GridSize, m_GridScale);
+    m_Geometry->setShader(m_ShaderManager);
     Object centralObj{};
     centralObj.mass = 20000.0; // Very massive
     centralObj.position = glm::vec3(0.0, 0.0, 0.0);
@@ -71,56 +63,59 @@ GridRenderer::GridRenderer(
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
     // Add orbiting bodies
-    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
+    constexpr int numOrbiters = 0; // Start with 5, adjust as needed
     const float G = m_Gravity; // 0.2f from your setup
-    const float centralMass = centralObj.mass;
-    float totalMass = centralMass;
+    // const float centralMass = centralObj.mass;
+    // float totalMass = centralMass;
 
     // Scale radii based on m_GridScale
     const float baseRadius = m_GridScale * 0.05; // 5% of grid scale as starting radius
     const float radiusStep = m_GridScale * 0.5 / numOrbiters; // Spread across 10% of grid
 
-    for ( int i = 0; i < numOrbiters; ++i )
-    {
-        Object orbiter{};
-        orbiter.mass = 10.0 + static_cast<float>(i) * 5.0;
+    // for ( int i = 0; i < numOrbiters; ++i )
+    // {
+    //     Object orbiter{};
+    //     orbiter.mass = 10.0 + static_cast<float>(i) * 5.0;
+    //
+    //     // Circular orbit parameters
+    //     float radius = baseRadius + i * radiusStep;
+    //     float angle = static_cast<float>(i) * 2.0 * glm::pi<float>() / numOrbiters;
+    //     glm::vec3 rawPosition(radius * cos(angle), 0.0, radius * sin(angle));
+    //     glm::vec3 position = convertCoordinates(
+    //         rawPosition,
+    //         GeometryType::Flat,
+    //         geometryType,
+    //         m_GridSize / 2,
+    //         m_Geometry);
+    //     orbiter.position = position;
+    //     orbiter.modelMatrix = glm::translate(glm::mat4(1.0), position);
+    //
+    //     float actualRadius = glm::length(position);
+    //     float v = std::sqrt(G * centralMass / actualRadius);
+    //     glm::vec3 radialDir = glm::normalize(position);
+    //     glm::vec3 tangentDir(-radialDir.z, 0.0, radialDir.x);
+    //     if ( glm::length(tangentDir) < 1e-6 )
+    //         tangentDir = glm::vec3(0.0, 0.0, 1.0);
+    //     orbiter.velocity = m_OrbitFactor * v * glm::normalize(tangentDir);
+    //
+    //     m_MassiveObjects.push_back(std::make_unique<Sphere>(orbiter));
+    //     auto& obj = m_MassiveObjects.back();
+    //     obj->setSize(1.0 + std::log(obj->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
+    //     totalMass += obj->m_Object.mass;
+    //     std::cout << "Object " << obj->getName()
+    //         << " Mass: " << obj->m_Object.mass << " w Radius: " << actualRadius
+    //         << " G = " << G << " Orbit = " << centralMass
+    //         << " Pos: " << vecToString(rawPosition) << " vs. " << vecToString(tangentDir)
+    //         << " Vel: " << vecToString(obj->m_Object.velocity) << " / " << v << "\n";
+    // }
 
-        // Circular orbit parameters
-        float radius = baseRadius + i * radiusStep;
-        float angle = static_cast<float>(i) * 2.0 * glm::pi<float>() / numOrbiters;
-        glm::vec3 rawPosition(radius * cos(angle), 0.0, radius * sin(angle));
-        glm::vec3 position = convertCoordinates(
-            rawPosition,
-            GeometryType::Flat,
-            geometryType,
-            m_GridSize / 2,
-            m_Geometry);
-        orbiter.position = position;
-        orbiter.modelMatrix = glm::translate(glm::mat4(1.0), position);
-
-        float actualRadius = glm::length(position);
-        float v = std::sqrt(G * centralMass / actualRadius);
-        glm::vec3 radialDir = glm::normalize(position);
-        glm::vec3 tangentDir(-radialDir.z, 0.0, radialDir.x);
-        if ( glm::length(tangentDir) < 1e-6 )
-            tangentDir = glm::vec3(0.0, 0.0, 1.0);
-        orbiter.velocity = m_OrbitFactor * v * glm::normalize(tangentDir);
-
-        m_MassiveObjects.push_back(std::make_unique<Sphere>(orbiter));
-        auto& obj = m_MassiveObjects.back();
-        obj->setSize(1.0 + std::log(obj->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
-        totalMass += obj->m_Object.mass;
-        std::cout << "Object " << obj->getName()
-            << " Mass: " << obj->m_Object.mass << " w Radius: " << actualRadius
-            << " G = " << G << " Orbit = " << centralMass
-            << " Pos: " << vecToString(rawPosition) << " vs. " << vecToString(tangentDir)
-            << " Vel: " << vecToString(obj->m_Object.velocity) << " / " << v << "\n";
-    }
-
-    m_WarpStrength = 0.1 / sqrt(centralMass / 1000.0); // Scales with mass
+    // m_WarpStrength = 0.1 / sqrt(centralMass / 1000.0); // Scales with mass
     m_Geometry->setWarpStrength(m_WarpStrength);
 
     // Initialize trails
+    vk::FenceCreateInfo fenceInfo{};
+    fenceInfo.setFlags(vk::FenceCreateFlagBits::eSignaled); // Start signaled so first frame runs
+    m_TrailUpdateFence = m_Device.createFence(fenceInfo);
     m_Trails.resize(m_MassiveObjects.size());
     for ( auto& trail : m_Trails )
         trail.positions.clear();
@@ -134,6 +129,14 @@ GridRenderer::~GridRenderer()
         m_Device.destroyPipeline(m_TrianglePipeline);
     if ( m_PipelineLayout )
         m_Device.destroyPipelineLayout(m_PipelineLayout);
+    if ( m_ComputePipeline )
+        m_Device.destroyPipeline(m_ComputePipeline);
+    if ( m_ComputePipelineLayout )
+        m_Device.destroyPipelineLayout(m_ComputePipelineLayout);
+    if ( m_ComputeDescriptorSetLayout )
+        m_Device.destroyDescriptorSetLayout(m_ComputeDescriptorSetLayout);
+    if ( m_ComputeDescriptorPool )
+        m_Device.destroyDescriptorPool(m_ComputeDescriptorPool);
     if ( m_VertexBuffer )
         m_Device.destroyBuffer(m_VertexBuffer);
     if ( m_VertexBufferMemory )
@@ -160,9 +163,10 @@ GridRenderer::~GridRenderer()
 
 void GridRenderer::init()
 {
+    createComputePipeline();
     generateGrid();
-    createVertexBuffer();
-    createIndexBuffer();
+    createVertexBuffer();  // Add this
+    createIndexBuffer();   // Add this
     createGraphicsPipeline();
 }
 
@@ -174,7 +178,32 @@ void GridRenderer::generateGrid()
     /// Initialize Grid object with geometrized grid
     m_Geometry->generateGrid(m_Vertices, m_Indices, m_GridSize, m_GridScale);
 
-    const uint32_t gridIndexCount = static_cast<uint32_t>(m_Indices.size());
+    std::cout << "GridSize: " << m_GridSize << ", Scale: " << m_GridScale << std::endl;
+    const size_t n_Vert = m_Vertices.size();
+    for ( int i = 0; i < std::min(10, (int)n_Vert); ++i ) {
+        std::cout << "Vertex " << i << ": Pos(" << vecToString(m_Vertices[i].position)
+                  << "), Normal(" << vecToString(m_Vertices[i].normal)
+                  << "), Color(" << vecToString(m_Vertices[i].color) << ")" << std::endl;
+    }
+    std::cout << "GridSize: " << m_GridSize << ", Scale: " << m_GridScale << std::endl;
+    for ( int i = std::min(10, (int)n_Vert); i >= 0; --i ) {
+        int rev_iter = n_Vert - i - 1;
+        std::cout << "Vertex " << rev_iter << ": Pos(" << vecToString(m_Vertices[rev_iter].position)
+                  << "), Normal(" << vecToString(m_Vertices[rev_iter].normal)
+                  << "), Color(" << vecToString(m_Vertices[rev_iter].color) << ")" << std::endl;
+    }
+    const size_t n_Idx = m_Indices.size();
+    std::cout << "INDEX SIZE: " << n_Idx << std::endl;
+    for ( int i = 0; i < std::min(20, (int)n_Idx); ++i ) {
+        std::cout << "m_Indices " << i << ": " << m_Indices[i] << std::endl;
+    }
+
+    for ( int i = std::min(20, (int)m_Indices.size()); i >= 0; --i ) {
+        int rev_iter = n_Idx - 1 - i;
+        std::cout << "m_Indices " << rev_iter << ": " << m_Indices[rev_iter] << std::endl;
+    }
+
+    const uint32_t gridIndexCount = static_cast<uint32_t>(m_Geometry->indexCount());
     m_GridObject.indexOffset = 0;
     m_GridObject.indexCount = gridIndexCount;
     m_GridObject.modelMatrix = glm::mat4(1.0f);
@@ -232,7 +261,7 @@ vk::DeviceMemory GridRenderer::allocateBufferMemory(
     return result;
 }
 
-void GridRenderer::copyBuffer(const vk::Buffer srcBuffer, const vk::Buffer dstBuffer, const vk::DeviceSize size)
+void GridRenderer::copyBuffer(const vk::Buffer srcBuffer, const vk::Buffer dstBuffer, const vk::DeviceSize size) const
 {
     const auto commandBuffer = beginSingleTimeCommands();
 
@@ -279,7 +308,10 @@ void GridRenderer::endSingleTimeCommands(const vk::CommandBuffer commandBuffer) 
 
 void GridRenderer::createVertexBuffer()
 {
-    const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
+    if (m_Vertices.empty())
+        throw std::runtime_error("Cannot create vertex buffer: m_Vertices is empty");
+
+    const vk::DeviceSize bufferSize = sizeof(Vertex) * m_Vertices.size();
 
     // Create staging buffer
     const auto stagingBuffer = createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc);
@@ -344,21 +376,20 @@ void GridRenderer::createIndexBuffer()
 
 void GridRenderer::createGraphicsPipeline()
 {
-    // Load shaders
-    std::vector<char> vertShaderCode = readFile("grid.vert.spv");
-    std::vector<char> fragShaderCode = readFile("grid.frag.spv");
+    // Retrieve the shader program for the current geometry type
+    std::vector<char> vertShaderCode = utils::readFile("grid.vert.spv");
+    std::vector<char> fragShaderCode = utils::readFile("grid.frag.spv");
 
     // Create shader modules
     vk::ShaderModuleCreateInfo vertShaderInfo{};
     vertShaderInfo.setCodeSize(vertShaderCode.size())
                   .setPCode(reinterpret_cast<const uint32_t*>(vertShaderCode.data()));
-    auto vertShaderModule = m_Device.createShaderModule(vertShaderInfo);
+    vk::ShaderModule vertShaderModule = m_Device.createShaderModule(vertShaderInfo);
 
     vk::ShaderModuleCreateInfo fragShaderInfo{};
     fragShaderInfo.setCodeSize(fragShaderCode.size())
                   .setPCode(reinterpret_cast<const uint32_t*>(fragShaderCode.data()));
-    auto fragShaderModule = m_Device.createShaderModule(fragShaderInfo);
-
+    vk::ShaderModule fragShaderModule = m_Device.createShaderModule(fragShaderInfo);
     // Shader stages (shared)
     vk::PipelineShaderStageCreateInfo vertStageInfo{};
     vertStageInfo.setStage(vk::ShaderStageFlagBits::eVertex)
@@ -373,18 +404,18 @@ void GridRenderer::createGraphicsPipeline()
     std::array<vk::PipelineShaderStageCreateInfo, 2> shaderStages = { vertStageInfo, fragStageInfo };
 
     // Vertex input (shared)
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = getBindingDescription();
+    auto attributeDescriptions = getAttributeDescriptions();
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.setVertexBindingDescriptionCount(1)
                    .setPVertexBindingDescriptions(&bindingDescription)
-                   .setVertexAttributeDescriptionCount(static_cast<uint32_t>(attributeDescriptions.size()))
+                   .setVertexAttributeDescriptionCount(attributeDescriptions.size())
                    .setPVertexAttributeDescriptions(attributeDescriptions.data());
 
     // Dynamic state (shared)
-    std::vector<vk::DynamicState> dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+    std::array<vk::DynamicState, 2> dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
     vk::PipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.setDynamicStateCount(static_cast<uint32_t>(dynamicStates.size()))
+    dynamicState.setDynamicStateCount(dynamicStates.size())
                 .setPDynamicStates(dynamicStates.data());
 
     // Viewport and scissor (shared)
@@ -413,9 +444,11 @@ void GridRenderer::createGraphicsPipeline()
 
     // Color blending (shared)
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.setColorWriteMask(vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                                            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
-                        .setBlendEnable(VK_FALSE);
+    colorBlendAttachment
+        .setColorWriteMask(
+            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+            vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA)
+        .setBlendEnable(VK_FALSE);
 
     vk::PipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.setLogicOpEnable(VK_FALSE)
@@ -441,15 +474,13 @@ void GridRenderer::createGraphicsPipeline()
     pipelineLayoutInfo.setPushConstantRangeCount(1)
                       .setPPushConstantRanges(&pushConstantRange);
     m_PipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
-    if (!m_PipelineLayout)
+    if ( !m_PipelineLayout )
         throw std::runtime_error("Failed to create pipeline layout");
 
     // --- Grid Pipeline ---
     vk::PipelineInputAssemblyStateCreateInfo gridInputAssembly{};
     gridInputAssembly
-        .setTopology(
-            m_CurrentGeometryType == GeometryType::Flat ?
-            vk::PrimitiveTopology::eLineList : vk::PrimitiveTopology::eTriangleList)
+        .setTopology(vk::PrimitiveTopology::eLineList) // Always use LineList for wireframe
         .setPrimitiveRestartEnable(VK_FALSE);
 
     vk::PipelineRasterizationStateCreateInfo gridRasterizer{};
@@ -477,7 +508,7 @@ void GridRenderer::createGraphicsPipeline()
                     .setSubpass(0);
 
     auto pipelineResult = m_Device.createGraphicsPipeline(nullptr, gridPipelineInfo);
-    if (pipelineResult.result != vk::Result::eSuccess)
+    if ( pipelineResult.result != vk::Result::eSuccess )
         throw std::runtime_error("Failed to create grid pipeline");
     m_GraphicsPipeline = pipelineResult.value;
 
@@ -511,13 +542,9 @@ void GridRenderer::createGraphicsPipeline()
                         .setSubpass(0);
 
     pipelineResult = m_Device.createGraphicsPipeline(nullptr, trianglePipelineInfo);
-    if (pipelineResult.result != vk::Result::eSuccess)
+    if ( pipelineResult.result != vk::Result::eSuccess )
         throw std::runtime_error("Failed to create triangle pipeline");
     m_TrianglePipeline = pipelineResult.value;
-
-    // Clean up shader modules
-    m_Device.destroyShaderModule(vertShaderModule);
-    m_Device.destroyShaderModule(fragShaderModule);
 }
 
 void GridRenderer::updateGeometry(GeometryType type)
@@ -534,6 +561,7 @@ void GridRenderer::updateGeometry(GeometryType type)
         // Step 2: Update geometry factory
         m_Geometry = geometryFactory(type, m_GridSize, m_GridScale);
         m_Geometry->setGridParams(m_GridSize, m_GridScale);
+        m_Geometry->setShader(m_ShaderManager);
         m_Geometry->setWarpStrength(m_WarpStrength);
         const float R = m_GridScale / 2.0f;
 
@@ -572,9 +600,8 @@ void GridRenderer::updateGeometry(GeometryType type)
         }
 
         // Step 4: Update grid and buffers
-        for ( size_t i = 0; i < m_Trails.size(); ++i )
+        for ( auto [positions] : m_Trails )
         {
-            auto& [positions] = m_Trails[i];
             for ( auto& pos : positions )
                 pos = convertCoordinates(
                     pos,
@@ -583,10 +610,31 @@ void GridRenderer::updateGeometry(GeometryType type)
                     R,
                     m_Geometry);
         }
+
         m_CurrentGeometryType = type;
+
+        // Recreate compute pipeline and buffers for the new geometry type
+        if ( m_ComputePipeline )
+            m_Device.destroyPipeline(m_ComputePipeline);
+        if ( m_ComputePipelineLayout )
+            m_Device.destroyPipelineLayout(m_ComputePipelineLayout);
+        if ( m_ComputeDescriptorSetLayout )
+            m_Device.destroyDescriptorSetLayout(m_ComputeDescriptorSetLayout);
+        if ( m_ComputeDescriptorPool )
+            m_Device.destroyDescriptorPool(m_ComputeDescriptorPool);
+
+        createComputePipeline();
         generateGrid();
-        createVertexBuffer();
-        createIndexBuffer();
+
+        // Recreate graphics pipeline to use the new shaders
+        if ( m_GraphicsPipeline )
+            m_Device.destroyPipeline(m_GraphicsPipeline);
+        if ( m_TrianglePipeline )
+            m_Device.destroyPipeline(m_TrianglePipeline);
+        if ( m_PipelineLayout )
+            m_Device.destroyPipelineLayout(m_PipelineLayout);
+
+        createGraphicsPipeline();
     }
 
 }
@@ -625,6 +673,10 @@ void GridRenderer::updateTrails()
     // Update trail vertex buffer
     if ( !m_TrailVertices.empty() && !m_TrailIndices.empty() )
     {
+        // Wait for previous update to finish
+        auto _ = m_Device.waitForFences(1, &m_TrailUpdateFence, VK_TRUE, UINT64_MAX);
+        _ = m_Device.resetFences(1, &m_TrailUpdateFence);
+
         const vk::DeviceSize bufferSize = sizeof(m_TrailVertices[0]) * m_TrailVertices.size();
         const vk::Buffer stagingBuffer = createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc);
         const vk::DeviceMemory stagingBufferMemory = allocateBufferMemory(
@@ -633,7 +685,7 @@ void GridRenderer::updateTrails()
         m_Device.bindBufferMemory(stagingBuffer, stagingBufferMemory, 0);
 
         void* data;
-        auto _ = m_Device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
+        _ = m_Device.mapMemory(stagingBufferMemory, 0, bufferSize, {}, &data);
         memcpy(data, m_TrailVertices.data(), bufferSize);
         m_Device.unmapMemory(stagingBufferMemory);
 
@@ -708,8 +760,8 @@ void GridRenderer::draw(vk::CommandBuffer commandBuffer) const
     commandBuffer.setScissor(0, scissor);
 
     constexpr vk::DeviceSize offsets[] = { 0 };
-    commandBuffer.bindVertexBuffers(0, 1, &m_VertexBuffer, offsets);
-    commandBuffer.bindIndexBuffer(m_IndexBuffer, 0, vk::IndexType::eUint32);
+    commandBuffer.bindVertexBuffers(0, 1, &m_ShaderManager->getVertexBuffer(), offsets);
+    commandBuffer.bindIndexBuffer(m_ShaderManager->getIndexBuffer(), 0, vk::IndexType::eUint32);
 
     PushConstants pc{};
     pc.view = m_Camera.getViewMatrix();
@@ -719,10 +771,10 @@ void GridRenderer::draw(vk::CommandBuffer commandBuffer) const
         m_Camera.nearPlane, m_Camera.farPlane
     );
     pc.projection[1][1] *= -1; // Flip Y-axis for Vulkan
+    pc.model = glm::mat4(1.0f);
 
     // Draw grid (lines)
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_GraphicsPipeline);
-    pc.model = m_GridObject.modelMatrix;
     commandBuffer.pushConstants(m_PipelineLayout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(PushConstants), &pc);
     commandBuffer.drawIndexed(m_GridObject.indexCount, 1, m_GridObject.indexOffset, 0, 0);
 
@@ -833,28 +885,26 @@ void GridRenderer::updateCamera()
 void GridRenderer::updateGrid()
 {
     // Grid starts at vertex 0, cube at 441, sphere follows
-    std::vector<float> masses;
-    std::vector<glm::vec3> massivePositions;
-    for ( const auto& shape : m_MassiveObjects )
-    {
-        massivePositions.push_back(shape->m_Object.modelMatrix[3]);
-        masses.push_back(shape->m_Object.mass);
-    }
+    // std::vector<float> masses;
+    // std::vector<glm::vec3> massivePositions;
+    // for ( const auto& shape : m_MassiveObjects )
+    // {
+    //     massivePositions.push_back(shape->m_Object.modelMatrix[3]);
+    //     masses.push_back(shape->m_Object.mass);
+    // }
 
     constexpr float maxDisplacement = 100.0f;
     constexpr float minDistSquared = 0.01f;
     constexpr float softeningLength = 1.0f;
 
     m_Geometry->setGridParams(m_GridSize, m_GridScale);
-    m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
+    // m_Geometry->warpGrid(m_Vertices, m_MassiveObjects, m_Gravity, maxDisplacement, minDistSquared, softeningLength);
 
     /// Update vertex buffer
     const vk::DeviceSize bufferSize = sizeof(m_Vertices[0]) * m_Vertices.size();
     const vk::Buffer stagingBuffer = createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc);
     const vk::DeviceMemory stagingBufferMemory = allocateBufferMemory(
-        stagingBuffer,
-        vk::MemoryPropertyFlagBits::eHostVisible |
-        vk::MemoryPropertyFlagBits::eHostCoherent);
+        stagingBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
     m_Device.bindBufferMemory(stagingBuffer, stagingBufferMemory, 0);
 
     void* data;
@@ -1339,4 +1389,140 @@ void GridRenderer::createDepthResources()
         // Transition depth image layout
         transitionImageLayout(m_DepthImages[i], m_DepthFormat, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
+}
+
+void GridRenderer::createComputePipeline()
+{
+    // Load the compute shader
+    // std::cout << "Create Compute Pipeline: " << m_CurrentGeometryType << std::endl;
+    const auto& [computeShaderModule, fragModule] = m_ShaderManager->getShaderProgram(m_CurrentGeometryType);
+
+    // Create descriptor set layout
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(2);
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = vk::StructureType::eDescriptorSetLayoutCreateInfo;
+    layoutInfo.bindingCount = bindings.size();
+    layoutInfo.pBindings = bindings.data();
+    m_ComputeDescriptorSetLayout = m_Device.createDescriptorSetLayout(layoutInfo);
+
+    // Create descriptor pool
+    std::vector<vk::DescriptorPoolSize> poolSizes(1);
+    poolSizes[0].type = vk::DescriptorType::eStorageBuffer;
+    poolSizes[0].descriptorCount = 2;
+
+    vk::DescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = vk::StructureType::eDescriptorPoolCreateInfo;
+    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1;
+    m_ComputeDescriptorPool = m_Device.createDescriptorPool(poolInfo);
+
+    // Allocate descriptor set
+    vk::DescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = vk::StructureType::eDescriptorSetAllocateInfo;
+    allocInfo.descriptorPool = m_ComputeDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &m_ComputeDescriptorSetLayout;
+    auto _2 = m_Device.allocateDescriptorSets(&allocInfo, &m_ComputeDescriptorSet);
+
+    // Create pipeline layout
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = vk::StructureType::ePipelineLayoutCreateInfo;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &m_ComputeDescriptorSetLayout;
+    vk::PushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(int) + sizeof(float); // uGridSize, uScale
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    m_ComputePipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
+
+    // Create compute pipeline
+    vk::ComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = vk::StructureType::eComputePipelineCreateInfo;
+    pipelineInfo.stage.sType = vk::StructureType::ePipelineShaderStageCreateInfo;
+    pipelineInfo.stage.stage = vk::ShaderStageFlagBits::eCompute;
+    pipelineInfo.stage.module = computeShaderModule;
+    pipelineInfo.stage.pName = "main";
+    pipelineInfo.layout = m_ComputePipelineLayout;
+    m_ComputePipeline = m_Device.createComputePipeline(nullptr, pipelineInfo).value;
+
+    // Clean up shader module
+    // m_Device.destroyShaderModule(computeShaderModule);
+
+    // Allocate GPU buffers
+    const vk::DeviceSize vertexCount = sizeof(Vertex) * m_Geometry->vertexCount();
+    const vk::DeviceSize indexCount = sizeof(uint32_t) * m_Geometry->indexCount();
+
+    const vk::Buffer vertexBuffer = createBuffer(
+        vertexCount * sizeof(Vertex),
+        vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferSrc);
+    const vk::DeviceMemory vertexBufferMemory = allocateBufferMemory(
+        vertexBuffer,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent);
+    m_Device.bindBufferMemory(vertexBuffer, vertexBufferMemory, 0);
+
+    const vk::Buffer indexBuffer = createBuffer(
+        indexCount * sizeof(uint32_t),
+        vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferSrc);
+    const vk::DeviceMemory indexBufferMemory = allocateBufferMemory(
+        indexBuffer,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent);
+    m_Device.bindBufferMemory(indexBuffer, indexBufferMemory, 0);
+
+    m_ShaderManager->setGPUBuffers(vertexBuffer, vertexBufferMemory, indexBuffer, indexBufferMemory);
+
+    // Update descriptor set with buffer bindings
+    std::vector<vk::WriteDescriptorSet> descriptorWrites(2);
+
+    vk::DescriptorBufferInfo vertexBufferInfo{};
+    vertexBufferInfo.buffer = vertexBuffer;
+    vertexBufferInfo.offset = 0;
+    vertexBufferInfo.range = vertexCount * sizeof(Vertex);
+
+    descriptorWrites[0].sType = vk::StructureType::eWriteDescriptorSet;
+    descriptorWrites[0].dstSet = m_ComputeDescriptorSet;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &vertexBufferInfo;
+
+    vk::DescriptorBufferInfo indexBufferInfo{};
+    indexBufferInfo.buffer = indexBuffer;
+    indexBufferInfo.offset = 0;
+    indexBufferInfo.range = indexCount * sizeof(uint32_t);
+
+    descriptorWrites[1].sType = vk::StructureType::eWriteDescriptorSet;
+    descriptorWrites[1].dstSet = m_ComputeDescriptorSet;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pBufferInfo = &indexBufferInfo;
+
+    m_Device.updateDescriptorSets(descriptorWrites, {});
+
+    // Set GPU buffers and compute pipeline in the shader manager
+    m_ShaderManager->setComputePipeline(
+        m_CommandPool,
+        m_ComputeQueue,
+        m_ComputePipeline,
+        m_ComputePipelineLayout,
+        m_ComputeDescriptorSetLayout,
+        m_ComputeDescriptorSet);
 }

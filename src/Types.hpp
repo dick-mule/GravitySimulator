@@ -11,28 +11,36 @@
 #include <vulkan/vulkan.hpp>
 #include <string>
 
-struct Vertex
-{
+struct Vertex {
     glm::vec3 position;
-    glm::vec3 color;
+    float padding1; // Aligns position to 16 bytes
     glm::vec3 normal;
-
-    static vk::VertexInputBindingDescription getBindingDescription();
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions();
+    float padding2; // Aligns normal to 16 bytes
+    glm::vec3 color;
+    float padding3; // Aligns color to 16 bytes
 };
 
-struct Object
-{
-    uint32_t indexOffset;
-    uint32_t indexCount;
-    glm::mat4 modelMatrix;
-    float mass = 0.0f;
-    glm::vec3 position = glm::vec3(0.0f);
-    glm::vec3 velocity = glm::vec3(0.0f);
-    glm::vec3 acceleration = glm::vec3(0.0f);
-    glm::vec3 reference_pos = glm::vec3(0.0f);
-};
+vk::VertexInputBindingDescription getBindingDescription();
+std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions();
 
+enum class ShapeTypes { CUBE, SPHERE };
+
+struct Object {
+    glm::vec3 position;      // Offset: 0 (16 bytes with padding)
+    float size;              // Offset: 12 (4 bytes)
+    glm::vec3 color;         // Offset: 16 (16 bytes with padding)
+    float mass;              // Offset: 28 (4 bytes)
+    glm::vec3 velocity;      // Offset: 32 (16 bytes with padding)
+    float padding1;          // Offset: 44 (4 bytes padding)
+    glm::vec3 acceleration;  // Offset: 48 (16 bytes with padding)
+    int type;                // Offset: 60 (4 bytes)
+    int stacks;              // Offset: 64 (4 bytes)
+    int slices;              // Offset: 68 (4 bytes)
+    float padding2;          // Offset: 72 (4 bytes padding)
+    glm::mat4 modelMatrix;   // Offset: 80 (64 bytes)
+    glm::vec3 reference_pos; // Offset: 144 (16 bytes with padding)
+    float padding3;          // Offset: 156 (4 bytes padding)
+};
 
 struct PushConstants
 {
@@ -44,18 +52,18 @@ struct PushConstants
 struct Camera
 {
     glm::vec3 position = glm::vec3(0.0f, 20.0f, 20.0f); // Camera at (0, 20, 20)
-    glm::vec3 target = glm::vec3(0.0f, 0.0f, 0.0f);    // Look at (0, 0, 0)
-    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);        // Up vector (0, 1, 0)
+    glm::vec3 target = glm::vec3(0.0f, 0.0f, 0.0f);     // Look at (0, 0, 0)
+    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);         // Up vector (0, 1, 0)
     float fov = 90.0f;                                  // FOV in degrees
     float nearPlane = 0.1f;
     float farPlane = 500.0f;
 
     // Orbit control parameters
-    float azimuth = glm::radians(45.0f);                // Angle in XZ-plane (radians)
-    float elevation = glm::radians(45.0f);              // Angle above XZ-plane (radians)
+    float azimuth = glm::radians(45.0f);         // Angle in XZ-plane (radians)
+    float elevation = glm::radians(45.0f);       // Angle above XZ-plane (radians)
     float radius = 30.0f;                               // Distance from target
-    float minRadius = 0.01f;                             // Minimum zoom distance
-    float maxRadius = 1000.0f;                           // Maximum zoom distance
+    float minRadius = 0.01f;                            // Minimum zoom distance
+    float maxRadius = 1000.0f;                          // Maximum zoom distance
     float panSpeed = 0.1f;                              // Panning speed
     float orbitSpeed = 0.005f;                          // Orbiting speed
     float zoomSpeed = 1.0f;                             // Zooming speed

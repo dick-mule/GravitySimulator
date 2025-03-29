@@ -17,9 +17,13 @@ include_directories(${CMAKE_SOURCE_DIR}/src/imgui)
 include_directories(${Vulkan_INCLUDE_DIRS})
 
 set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
+file(GLOB_RECURSE COMP_SOURCES ${SHADER_DIR}/*.comp)
+file(GLOB_RECURSE VERT_SOURCES ${SHADER_DIR}/*.vert)
+file(GLOB_RECURSE FRAG_SOURCES ${SHADER_DIR}/*.frag)
 set(SHADER_FILES
-        ${SHADER_DIR}/grid.frag
-        ${SHADER_DIR}/grid.vert
+        ${COMP_SOURCES}
+        ${VERT_SOURCES}
+        ${FRAG_SOURCES}
 )
 
 foreach(SHADER ${SHADER_FILES})
@@ -34,7 +38,6 @@ foreach(SHADER ${SHADER_FILES})
     list(APPEND SHADER_OUTPUTS ${SHADER_OUTPUT})
 endforeach()
 add_custom_target(Shaders DEPENDS ${SHADER_OUTPUTS})
-
 
 # Source files
 set(SOURCES
@@ -56,6 +59,8 @@ set(SOURCES
         src/Types.hpp
         src/Geometry.cpp
         src/Geometry.hpp
+        src/utils/ShaderLoader.cpp
+        src/utils/ShaderLoader.hpp
 )
 
 # Create executable
