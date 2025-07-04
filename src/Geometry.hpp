@@ -7,6 +7,7 @@
 #include "Types.hpp" // Include shared types
 #include "utils/ShaderLoader.hpp"
 #include <unordered_map>
+#include <sstream>
 
 enum class GeometryType { Flat, Spherical, Hyperbolic };
 

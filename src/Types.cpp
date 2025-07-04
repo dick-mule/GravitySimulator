@@ -102,8 +102,8 @@ void Cube::addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& ind
         indices.push_back(base + 2);
         indices.push_back(base + 3);
     }
-    m_Object.indexOffset = cubeIndexOffset;
-    m_Object.indexCount = 36;
+    // m_Object.indexOffset = cubeIndexOffset;
+    // m_Object.indexCount = 36;
     // m_Object.modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f)); // Center of simulation
     // m_Object.velocity = glm::vec3(0.0f, 0.0f, 0.0f); // Stationary for simplicity
 }
@@ -155,8 +155,8 @@ void Sphere::addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& i
             indices.push_back(idx3);
         }
     }
-    m_Object.indexOffset = sphereIndexOffset;
-    m_Object.indexCount = static_cast<uint32_t>(indices.size()) - sphereIndexOffset;
+    // m_Object.indexOffset = sphereIndexOffset;
+    // m_Object.indexCount = static_cast<uint32_t>(indices.size()) - sphereIndexOffset;
     // m_Object.modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(10.0f, 0.0f, 0.0f)); // Start 10 units right
     // m_Object.velocity = glm::vec3(0.0f, 0.0f, -0.5f); // Moving left
 }

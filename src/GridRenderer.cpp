@@ -3,15 +3,13 @@
 //
 
 #include "GridRenderer.hpp"
-#include <stdexcept>
-#include <fstream>
-#include <iostream>
 #include <imgui.h>
 
 
 static std::string vecToString(const glm::vec3& vec)
 {
     std::stringstream ss;
+    // std::stringstream ss;
     ss << vec.x << " " << vec.y << " " << vec.z;
     return ss.str();
 }

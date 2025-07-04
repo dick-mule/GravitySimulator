@@ -10,6 +10,7 @@
 #include <glm/gtx/norm.hpp> // Include the extension header
 #include <vulkan/vulkan.hpp>
 #include <string>
+#include <atomic>
 
 struct Vertex {
     glm::vec3 position;
@@ -40,6 +41,10 @@ struct Object {
     glm::mat4 modelMatrix;   // Offset: 80 (64 bytes)
     glm::vec3 reference_pos; // Offset: 144 (16 bytes with padding)
     float padding3;          // Offset: 156 (4 bytes padding)
+    size_t indexOffset;
+    size_t indexCount;
+    size_t vertexOffset;
+    size_t vertexCount;
 };
 
 struct PushConstants
