@@ -12,7 +12,8 @@
 #include <string>
 #include <atomic>
 
-struct Vertex {
+struct Vertex
+{
     glm::vec3 position;
     float padding1; // Aligns position to 16 bytes
     glm::vec3 normal;
@@ -26,7 +27,8 @@ std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions();
 
 enum class ShapeTypes { CUBE, SPHERE };
 
-struct Object {
+struct Object
+{
     glm::vec3 position;      // Offset: 0 (16 bytes with padding)
     float size;              // Offset: 12 (4 bytes)
     glm::vec3 color;         // Offset: 16 (16 bytes with padding)
@@ -73,8 +75,8 @@ struct Camera
     float orbitSpeed = 0.005f;                          // Orbiting speed
     float zoomSpeed = 1.0f;                             // Zooming speed
 
-    glm::vec3 getPosition() const;
-    glm::mat4 getViewMatrix() const;
+    [[nodiscard]] glm::vec3 getPosition() const;
+    [[nodiscard]] glm::mat4 getViewMatrix() const;
 };
 
 class Shape
@@ -90,10 +92,10 @@ protected:
 public:
     explicit Shape(const Object& object);
     virtual ~Shape();
-    virtual std::string getName() const = 0;
+    [[nodiscard]] virtual std::string getName() const = 0;
     virtual void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) = 0;
     void setSize(float size) { m_Size = size; }
-    float getSize() const { return m_Size; }
+    [[nodiscard]] float getSize() const { return m_Size; }
 };
 
 class Cube final : public Shape
@@ -104,7 +106,7 @@ protected:
 public:
     using Shape::Shape;
     ~Cube() override = default;
-    std::string getName() const override { return "Cube: " + std::to_string(m_MyId - 1); }
+    [[nodiscard]] std::string getName() const override { return "Cube: " + std::to_string(m_MyId - 1); }
     void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) override;
 };
 
@@ -118,6 +120,6 @@ protected:
 public:
     using Shape::Shape;
     ~Sphere() override = default;
-    std::string getName() const override { return "Sphere: " + std::to_string(m_MyId - 1); }
+    [[nodiscard]] std::string getName() const override { return "Sphere: " + std::to_string(m_MyId - 1); }
     void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) override;
 };
