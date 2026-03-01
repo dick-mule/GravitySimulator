@@ -1,11 +1,12 @@
-#include "VulkanApp.hpp"
+// #include "VulkanApp.hpp"
+#include "rewrite/VulkanApp.hpp"
 #include <iostream>
 
 int main() {
     try
     {
         std::print("MAKING APP\n");
-        VulkanApp app;
+        VulkanApp app("Gravity Simulator (Vulkan/GPU Based)");
         std::print("RUN APP\n");
         app.run();
         std::print("APP RAN\n");

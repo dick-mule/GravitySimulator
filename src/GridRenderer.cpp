@@ -9,115 +9,101 @@
 static std::string vecToString(const glm::vec3& vec)
 {
     std::stringstream ss;
-    // std::stringstream ss;
     ss << vec.x << " " << vec.y << " " << vec.z;
     return ss.str();
 }
 
 static int firstFrame = 0;
 
-GridRenderer::GridRenderer(
-    const vk::Device& device,
-    const vk::PhysicalDevice& physicalDevice,
-    const vk::CommandPool& commandPool,
-    const vk::Queue& graphicsQueue,
-    const vk::Queue& computeQueue,
-    const vk::RenderPass& renderPass,
-    const std::vector<vk::Image>& swapchainImages,
-    const vk::Extent2D& swapchainExtent,
-    GeometryType geometryType)
-    : m_Geometry(nullptr)
-    , m_ShaderManager(std::make_shared<GeometryShader>(device, physicalDevice))
-    , m_CurrentGeometryType(geometryType)
-    , m_Device(device)
-    , m_PhysicalDevice(physicalDevice)
-    , m_CommandPool(commandPool)
-    , m_GraphicsQueue(graphicsQueue)
-    , m_ComputeQueue(computeQueue)  // Set here
-    , m_RenderPass(renderPass)
-    , m_SwapchainImages(swapchainImages)
-    , m_SwapchainExtent(swapchainExtent)
-    , m_VertexBuffer(nullptr)
-    , m_VertexBufferMemory(nullptr)
-    , m_IndexBuffer(nullptr)
-    , m_IndexBufferMemory(nullptr)
-    , m_PipelineLayout(nullptr)
-    , m_GraphicsPipeline(nullptr)
-    , m_LinePipeline(nullptr)
-    , m_TrianglePipeline(nullptr)
-    , m_PushConstants()
-    , m_DepthFormat()
-    , m_GridObject()
+void GridRenderer::makeCentralObject()
 {
-    m_Geometry = geometryFactory(geometryType, m_GridSize, m_GridScale);
-    m_Geometry->setShader(m_ShaderManager);
     Object centralObj{};
     centralObj.mass = 20000.0; // Very massive
-    centralObj.position = glm::vec3(0.0, 0.0, 0.0);
-    centralObj.modelMatrix = glm::translate(glm::mat4(1.0), centralObj.position); // Center of grid
-    centralObj.velocity = glm::vec3(0.0); // Stationary
-    auto centralShape = std::make_shared<Sphere>(centralObj);
+    centralObj.color = glm::vec4(1.0, 0.0, 0.0, 0.0);
+    alignPosition(centralObj);
+    const auto centralShape = std::make_shared<Sphere>(centralObj);
+    centralShape->setSize(1.0 + std::log(centralObj.mass / std::sqrt(m_SimulationConfig.grid_scale))); // Larger orbiters
     m_MassiveObjects.push_back(centralShape); // Using Sphere for simplicity
-    centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
+    m_CentralObj = centralShape;
+}
 
-    // Add orbiting bodies
-    constexpr int numOrbiters = 0; // Start with 5, adjust as needed
-    const float G = m_Gravity; // 0.2f from your setup
-    // const float centralMass = centralObj.mass;
-    // float totalMass = centralMass;
+void GridRenderer::makeOrbiters()
+{
+    if ( m_SimulationConfig.n_orbiters < 1 || !m_CentralObj )
+        return;
+
+    const float centralMass = (*m_CentralObj)->mass;
+    float totalMass = centralMass;
 
     // Scale radii based on m_GridScale
-    const float baseRadius = m_GridScale * 0.05; // 5% of grid scale as starting radius
-    const float radiusStep = m_GridScale * 0.5 / numOrbiters; // Spread across 10% of grid
+    for ( size_t i = 0; i < m_SimulationConfig.n_orbiters; ++i )
+    {
+        Object orbiter{};
+        orbiter.mass = 10.0 + static_cast<float>(i) * 5.0;
 
-    // for ( int i = 0; i < numOrbiters; ++i )
-    // {
-    //     Object orbiter{};
-    //     orbiter.mass = 10.0 + static_cast<float>(i) * 5.0;
-    //
-    //     // Circular orbit parameters
-    //     float radius = baseRadius + i * radiusStep;
-    //     float angle = static_cast<float>(i) * 2.0 * glm::pi<float>() / numOrbiters;
-    //     glm::vec3 rawPosition(radius * cos(angle), 0.0, radius * sin(angle));
-    //     glm::vec3 position = convertCoordinates(
-    //         rawPosition,
-    //         GeometryType::Flat,
-    //         geometryType,
-    //         m_GridSize / 2,
-    //         m_Geometry);
-    //     orbiter.position = position;
-    //     orbiter.modelMatrix = glm::translate(glm::mat4(1.0), position);
-    //
-    //     float actualRadius = glm::length(position);
-    //     float v = std::sqrt(G * centralMass / actualRadius);
-    //     glm::vec3 radialDir = glm::normalize(position);
-    //     glm::vec3 tangentDir(-radialDir.z, 0.0, radialDir.x);
-    //     if ( glm::length(tangentDir) < 1e-6 )
-    //         tangentDir = glm::vec3(0.0, 0.0, 1.0);
-    //     orbiter.velocity = m_OrbitFactor * v * glm::normalize(tangentDir);
-    //
-    //     m_MassiveObjects.push_back(std::make_unique<Sphere>(orbiter));
-    //     auto& obj = m_MassiveObjects.back();
-    //     obj->setSize(1.0 + std::log(obj->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
-    //     totalMass += obj->m_Object.mass;
-    //     std::cout << "Object " << obj->getName()
-    //         << " Mass: " << obj->m_Object.mass << " w Radius: " << actualRadius
-    //         << " G = " << G << " Orbit = " << centralMass
-    //         << " Pos: " << vecToString(rawPosition) << " vs. " << vecToString(tangentDir)
-    //         << " Vel: " << vecToString(obj->m_Object.velocity) << " / " << v << "\n";
-    // }
+        // Circular orbit parameters
+        float angle = m_SimulationConfig.angle(i);
+        float radius = m_SimulationConfig.radius(i);
+        glm::vec3 rawPosition(radius * cos(angle), 0.0, radius * sin(angle));
+        glm::vec3 position = convertCoordinates(
+            rawPosition,
+            GeometryType::Flat,
+            m_CurrentGeometryType,
+            m_SimulationConfig.grid_size / 2,
+            m_Geometry);
+        orbiter.position = position;
+        alignPosition(orbiter);
 
-    // m_WarpStrength = 0.1 / sqrt(centralMass / 1000.0); // Scales with mass
-    m_Geometry->setWarpStrength(m_WarpStrength);
+        float actualRadius = glm::length(position);
+        float v = std::sqrt(m_SimulationConfig.g_factor * centralMass / actualRadius);
+        glm::vec3 radialDir = glm::normalize(position);
+        glm::vec3 tangentDir(-radialDir.z, 0.0, radialDir.x);
+        if ( glm::length(tangentDir) < 1e-6 )
+            tangentDir = glm::vec3(0.0, 0.0, 1.0);
+        orbiter.velocity = v * glm::normalize(tangentDir);
 
-    // Initialize trails
+        m_MassiveObjects.push_back(std::make_unique<Sphere>(orbiter));
+        auto& obj = m_MassiveObjects.back();
+        obj->setSize(1.0 + std::log(obj->m_Object.mass / std::sqrt(m_SimulationConfig.grid_scale))); // Larger orbiters
+        totalMass += obj->m_Object.mass;
+        std::cout << "Object " << obj->getName()
+            << " Mass: " << obj->m_Object.mass << " w Radius: " << actualRadius
+            << " G = " << m_SimulationConfig.g_factor << " Orbit = " << centralMass
+            << " Pos: " << vecToString(rawPosition) << " vs. " << vecToString(tangentDir)
+            << " Vel: " << vecToString(obj->m_Object.velocity) << " / " << v << "\n";
+    }
+}
+
+void GridRenderer::initializeObjects()
+{
+    makeCentralObject();
+    makeOrbiters();
+}
+
+GridRenderer::GridRenderer(
+    const std::shared_ptr<VulkanResourceManager>& manager,
+    const GeometryType geometryType,
+    const SimulationConfig& simulationConfig)
+    : m_ResourceManager(manager)
+    , m_Geometry(geometryFactory(geometryType, m_GridSize, m_GridScale))
+    , m_ShaderManager(std::make_shared<GeometryShader>(manager))
+    , m_CurrentGeometryType(geometryType)
+    , m_SimulationConfig(simulationConfig)
+    , m_MassiveObjects(std::vector<std::shared_ptr<Shape>>())
+    , m_CentralObj(nullptr)
+{
+    m_Geometry->setShader(m_ShaderManager);
+    initializeObjects();
+    m_Geometry->setWarpStrength(m_SimulationConfig.warp_strength);// Initialize trails
     vk::FenceCreateInfo fenceInfo{};
     fenceInfo.setFlags(vk::FenceCreateFlagBits::eSignaled); // Start signaled so first frame runs
     m_TrailUpdateFence = m_Device.createFence(fenceInfo);
     m_Trails.resize(m_MassiveObjects.size());
-    for ( auto& trail : m_Trails )
-        trail.positions.clear();
+    for ( auto& [positions] : m_Trails )
+        positions.clear();
 }
+
+
 
 GridRenderer::~GridRenderer()
 {

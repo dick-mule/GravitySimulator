@@ -85,6 +85,51 @@ rebuild_cache:
 rebuild_cache/fast: rebuild_cache
 .PHONY : rebuild_cache/fast
 
+# Special rule for the target list_install_components
+list_install_components:
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Available install components are: \"Unspecified\""
+.PHONY : list_install_components
+
+# Special rule for the target list_install_components
+list_install_components/fast: list_install_components
+.PHONY : list_install_components/fast
+
+# Special rule for the target install
+install: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -P cmake_install.cmake
+.PHONY : install
+
+# Special rule for the target install
+install/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Install the project..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -P cmake_install.cmake
+.PHONY : install/fast
+
+# Special rule for the target install/local
+install/local: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+.PHONY : install/local
+
+# Special rule for the target install/local
+install/local/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing only the local directory..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -DCMAKE_INSTALL_LOCAL_ONLY=1 -P cmake_install.cmake
+.PHONY : install/local/fast
+
+# Special rule for the target install/strip
+install/strip: preinstall
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip
+
+# Special rule for the target install/strip
+install/strip/fast: preinstall/fast
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Installing the project stripped..."
+	/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -DCMAKE_INSTALL_DO_STRIP=1 -P cmake_install.cmake
+.PHONY : install/strip/fast
+
 # The main all target
 all: cmake_check_build_system
 	$(CMAKE_COMMAND) -E cmake_progress_start /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles /Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug//CMakeFiles/progress.marks
@@ -141,6 +186,19 @@ GravitySimulator: cmake_check_build_system
 GravitySimulator/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/build
 .PHONY : GravitySimulator/fast
+
+#=============================================================================
+# Target rules for targets named cpp_dependencies
+
+# Build rule for target.
+cpp_dependencies: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 cpp_dependencies
+.PHONY : cpp_dependencies
+
+# fast build rule for target.
+cpp_dependencies/fast:
+	$(MAKE) $(MAKESILENT) -f cpp_dependencies/CMakeFiles/cpp_dependencies.dir/build.make cpp_dependencies/CMakeFiles/cpp_dependencies.dir/build
+.PHONY : cpp_dependencies/fast
 
 src/Geometry.o: src/Geometry.cpp.o
 .PHONY : src/Geometry.o
@@ -454,6 +512,174 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
+src/rewrite/Geometry.o: src/rewrite/Geometry.cpp.o
+.PHONY : src/rewrite/Geometry.o
+
+# target to build an object file
+src/rewrite/Geometry.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o
+.PHONY : src/rewrite/Geometry.cpp.o
+
+src/rewrite/Geometry.i: src/rewrite/Geometry.cpp.i
+.PHONY : src/rewrite/Geometry.i
+
+# target to preprocess a source file
+src/rewrite/Geometry.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.i
+.PHONY : src/rewrite/Geometry.cpp.i
+
+src/rewrite/Geometry.s: src/rewrite/Geometry.cpp.s
+.PHONY : src/rewrite/Geometry.s
+
+# target to generate assembly for a file
+src/rewrite/Geometry.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.s
+.PHONY : src/rewrite/Geometry.cpp.s
+
+src/rewrite/GridRenderer.o: src/rewrite/GridRenderer.cpp.o
+.PHONY : src/rewrite/GridRenderer.o
+
+# target to build an object file
+src/rewrite/GridRenderer.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o
+.PHONY : src/rewrite/GridRenderer.cpp.o
+
+src/rewrite/GridRenderer.i: src/rewrite/GridRenderer.cpp.i
+.PHONY : src/rewrite/GridRenderer.i
+
+# target to preprocess a source file
+src/rewrite/GridRenderer.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.i
+.PHONY : src/rewrite/GridRenderer.cpp.i
+
+src/rewrite/GridRenderer.s: src/rewrite/GridRenderer.cpp.s
+.PHONY : src/rewrite/GridRenderer.s
+
+# target to generate assembly for a file
+src/rewrite/GridRenderer.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.s
+.PHONY : src/rewrite/GridRenderer.cpp.s
+
+src/rewrite/ImGuiHandler.o: src/rewrite/ImGuiHandler.cpp.o
+.PHONY : src/rewrite/ImGuiHandler.o
+
+# target to build an object file
+src/rewrite/ImGuiHandler.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o
+.PHONY : src/rewrite/ImGuiHandler.cpp.o
+
+src/rewrite/ImGuiHandler.i: src/rewrite/ImGuiHandler.cpp.i
+.PHONY : src/rewrite/ImGuiHandler.i
+
+# target to preprocess a source file
+src/rewrite/ImGuiHandler.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.i
+.PHONY : src/rewrite/ImGuiHandler.cpp.i
+
+src/rewrite/ImGuiHandler.s: src/rewrite/ImGuiHandler.cpp.s
+.PHONY : src/rewrite/ImGuiHandler.s
+
+# target to generate assembly for a file
+src/rewrite/ImGuiHandler.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.s
+.PHONY : src/rewrite/ImGuiHandler.cpp.s
+
+src/rewrite/Types.o: src/rewrite/Types.cpp.o
+.PHONY : src/rewrite/Types.o
+
+# target to build an object file
+src/rewrite/Types.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o
+.PHONY : src/rewrite/Types.cpp.o
+
+src/rewrite/Types.i: src/rewrite/Types.cpp.i
+.PHONY : src/rewrite/Types.i
+
+# target to preprocess a source file
+src/rewrite/Types.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.i
+.PHONY : src/rewrite/Types.cpp.i
+
+src/rewrite/Types.s: src/rewrite/Types.cpp.s
+.PHONY : src/rewrite/Types.s
+
+# target to generate assembly for a file
+src/rewrite/Types.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.s
+.PHONY : src/rewrite/Types.cpp.s
+
+src/rewrite/VkResourceManager.o: src/rewrite/VkResourceManager.cpp.o
+.PHONY : src/rewrite/VkResourceManager.o
+
+# target to build an object file
+src/rewrite/VkResourceManager.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o
+.PHONY : src/rewrite/VkResourceManager.cpp.o
+
+src/rewrite/VkResourceManager.i: src/rewrite/VkResourceManager.cpp.i
+.PHONY : src/rewrite/VkResourceManager.i
+
+# target to preprocess a source file
+src/rewrite/VkResourceManager.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.i
+.PHONY : src/rewrite/VkResourceManager.cpp.i
+
+src/rewrite/VkResourceManager.s: src/rewrite/VkResourceManager.cpp.s
+.PHONY : src/rewrite/VkResourceManager.s
+
+# target to generate assembly for a file
+src/rewrite/VkResourceManager.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.s
+.PHONY : src/rewrite/VkResourceManager.cpp.s
+
+src/rewrite/VulkanApp.o: src/rewrite/VulkanApp.cpp.o
+.PHONY : src/rewrite/VulkanApp.o
+
+# target to build an object file
+src/rewrite/VulkanApp.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o
+.PHONY : src/rewrite/VulkanApp.cpp.o
+
+src/rewrite/VulkanApp.i: src/rewrite/VulkanApp.cpp.i
+.PHONY : src/rewrite/VulkanApp.i
+
+# target to preprocess a source file
+src/rewrite/VulkanApp.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.i
+.PHONY : src/rewrite/VulkanApp.cpp.i
+
+src/rewrite/VulkanApp.s: src/rewrite/VulkanApp.cpp.s
+.PHONY : src/rewrite/VulkanApp.s
+
+# target to generate assembly for a file
+src/rewrite/VulkanApp.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.s
+.PHONY : src/rewrite/VulkanApp.cpp.s
+
+src/utils/ResourceManager.o: src/utils/ResourceManager.cpp.o
+.PHONY : src/utils/ResourceManager.o
+
+# target to build an object file
+src/utils/ResourceManager.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o
+.PHONY : src/utils/ResourceManager.cpp.o
+
+src/utils/ResourceManager.i: src/utils/ResourceManager.cpp.i
+.PHONY : src/utils/ResourceManager.i
+
+# target to preprocess a source file
+src/utils/ResourceManager.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.i
+.PHONY : src/utils/ResourceManager.cpp.i
+
+src/utils/ResourceManager.s: src/utils/ResourceManager.cpp.s
+.PHONY : src/utils/ResourceManager.s
+
+# target to generate assembly for a file
+src/utils/ResourceManager.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/GravitySimulator.dir/build.make CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.s
+.PHONY : src/utils/ResourceManager.cpp.s
+
 src/utils/ShaderLoader.o: src/utils/ShaderLoader.cpp.o
 .PHONY : src/utils/ShaderLoader.o
 
@@ -485,9 +711,14 @@ help:
 	@echo "... clean"
 	@echo "... depend"
 	@echo "... edit_cache"
+	@echo "... install"
+	@echo "... install/local"
+	@echo "... install/strip"
+	@echo "... list_install_components"
 	@echo "... rebuild_cache"
 	@echo "... Shaders"
 	@echo "... GravitySimulator"
+	@echo "... cpp_dependencies"
 	@echo "... src/Geometry.o"
 	@echo "... src/Geometry.i"
 	@echo "... src/Geometry.s"
@@ -527,6 +758,27 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
+	@echo "... src/rewrite/Geometry.o"
+	@echo "... src/rewrite/Geometry.i"
+	@echo "... src/rewrite/Geometry.s"
+	@echo "... src/rewrite/GridRenderer.o"
+	@echo "... src/rewrite/GridRenderer.i"
+	@echo "... src/rewrite/GridRenderer.s"
+	@echo "... src/rewrite/ImGuiHandler.o"
+	@echo "... src/rewrite/ImGuiHandler.i"
+	@echo "... src/rewrite/ImGuiHandler.s"
+	@echo "... src/rewrite/Types.o"
+	@echo "... src/rewrite/Types.i"
+	@echo "... src/rewrite/Types.s"
+	@echo "... src/rewrite/VkResourceManager.o"
+	@echo "... src/rewrite/VkResourceManager.i"
+	@echo "... src/rewrite/VkResourceManager.s"
+	@echo "... src/rewrite/VulkanApp.o"
+	@echo "... src/rewrite/VulkanApp.i"
+	@echo "... src/rewrite/VulkanApp.s"
+	@echo "... src/utils/ResourceManager.o"
+	@echo "... src/utils/ResourceManager.i"
+	@echo "... src/utils/ResourceManager.s"
 	@echo "... src/utils/ShaderLoader.o"
 	@echo "... src/utils/ShaderLoader.i"
 	@echo "... src/utils/ShaderLoader.s"

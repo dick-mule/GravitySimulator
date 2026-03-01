@@ -21,6 +21,13 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/Users/richardmule/CLionProjects/GravitySimulator/src/imgui/imgui_tables.cpp" "CMakeFiles/GravitySimulator.dir/src/imgui/imgui_tables.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/imgui/imgui_tables.cpp.o.d"
   "/Users/richardmule/CLionProjects/GravitySimulator/src/imgui/imgui_widgets.cpp" "CMakeFiles/GravitySimulator.dir/src/imgui/imgui_widgets.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/imgui/imgui_widgets.cpp.o.d"
   "/Users/richardmule/CLionProjects/GravitySimulator/src/main.cpp" "CMakeFiles/GravitySimulator.dir/src/main.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/main.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Geometry.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/GridRenderer.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/ImGuiHandler.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Types.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VkResourceManager.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VulkanApp.cpp" "CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o.d"
+  "/Users/richardmule/CLionProjects/GravitySimulator/src/utils/ResourceManager.cpp" "CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o.d"
   "/Users/richardmule/CLionProjects/GravitySimulator/src/utils/ShaderLoader.cpp" "CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o" "gcc" "CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o.d"
   )
 

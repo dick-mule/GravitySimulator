@@ -4,7 +4,7 @@
 # compile CXX with /Library/Developer/CommandLineTools/usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/Users/richardmule/CLionProjects/GravitySimulator/src -I/Users/richardmule/CLionProjects/GravitySimulator/src/imgui -isystem /usr/local/include -isystem /opt/homebrew/include
+CXX_INCLUDES = -I/Users/richardmule/CLionProjects/GravitySimulator/src -I/Users/richardmule/CLionProjects/GravitySimulator/src/imgui -I/Users/richardmule/CLionProjects/GravitySimulator/cpp_dependencies/magic_enum/include/magic_enum -isystem /usr/local/include -isystem /opt/homebrew/include
 
 CXX_FLAGSarm64 = -g -std=gnu++2b -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk -fcolor-diagnostics
 

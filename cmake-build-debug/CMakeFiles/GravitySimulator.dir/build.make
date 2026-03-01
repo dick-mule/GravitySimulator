@@ -265,6 +265,104 @@ CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.s"
 	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ShaderLoader.cpp -o CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.s
 
+CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ResourceManager.cpp
+CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building CXX object CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ResourceManager.cpp
+
+CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ResourceManager.cpp > CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/utils/ResourceManager.cpp -o CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VulkanApp.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VulkanApp.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VulkanApp.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VulkanApp.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VkResourceManager.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_17) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VkResourceManager.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VkResourceManager.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/VkResourceManager.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/ImGuiHandler.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/ImGuiHandler.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/ImGuiHandler.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/ImGuiHandler.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/GridRenderer.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/GridRenderer.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/GridRenderer.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/GridRenderer.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Types.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Types.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Types.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Types.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.s
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o: CMakeFiles/GravitySimulator.dir/flags.make
+CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o: /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Geometry.cpp
+CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o: CMakeFiles/GravitySimulator.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_21) "Building CXX object CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o -MF CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o.d -o CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o -c /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Geometry.cpp
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.i"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Geometry.cpp > CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.i
+
+CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.s"
+	/Library/Developer/CommandLineTools/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/richardmule/CLionProjects/GravitySimulator/src/rewrite/Geometry.cpp -o CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.s
+
 # Object files for target GravitySimulator
 GravitySimulator_OBJECTS = \
 "CMakeFiles/GravitySimulator.dir/src/main.cpp.o" \
@@ -280,7 +378,14 @@ GravitySimulator_OBJECTS = \
 "CMakeFiles/GravitySimulator.dir/src/GridRenderer.cpp.o" \
 "CMakeFiles/GravitySimulator.dir/src/Types.cpp.o" \
 "CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o" \
-"CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o"
+"CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o" \
+"CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o"
 
 # External object files for target GravitySimulator
 GravitySimulator_EXTERNAL_OBJECTS =
@@ -299,11 +404,19 @@ GravitySimulator: CMakeFiles/GravitySimulator.dir/src/GridRenderer.cpp.o
 GravitySimulator: CMakeFiles/GravitySimulator.dir/src/Types.cpp.o
 GravitySimulator: CMakeFiles/GravitySimulator.dir/src/Geometry.cpp.o
 GravitySimulator: CMakeFiles/GravitySimulator.dir/src/utils/ShaderLoader.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/utils/ResourceManager.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/VulkanApp.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/VkResourceManager.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/ImGuiHandler.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/GridRenderer.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/Types.cpp.o
+GravitySimulator: CMakeFiles/GravitySimulator.dir/src/rewrite/Geometry.cpp.o
 GravitySimulator: CMakeFiles/GravitySimulator.dir/build.make
 GravitySimulator: /opt/homebrew/lib/libglfw.3.4.dylib
 GravitySimulator: /usr/local/lib/libvulkan.dylib
+GravitySimulator: cpp_dependencies/libcpp_dependencies.dylib
 GravitySimulator: CMakeFiles/GravitySimulator.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Linking CXX executable GravitySimulator"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/Users/richardmule/CLionProjects/GravitySimulator/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_22) "Linking CXX executable GravitySimulator"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/GravitySimulator.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

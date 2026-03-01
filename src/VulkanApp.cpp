@@ -239,7 +239,6 @@ void VulkanApp::createLogicalDevice()
 void VulkanApp::createSwapchain()
 {
     const auto capabilities = m_PhysicalDevice.getSurfaceCapabilitiesKHR(m_Surface);
-
     const auto formats = m_PhysicalDevice.getSurfaceFormatsKHR(m_Surface);
     if ( formats.empty() )
         throw std::runtime_error("No surface formats available");

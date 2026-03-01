@@ -1,0 +1,54 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+struct Vertex {
+    vec4 position; // vec3 + padding interpreted as vec4
+    vec4 normal;
+    vec4 color;
+};
+
+layout(std430, binding = 0) buffer VertexBuffer {
+    Vertex vertices[];
+};
+
+layout(std430, binding = 1) buffer IndexBuffer {
+    uint indices[];
+};
+
+layout(push_constant) uniform PushConstants {
+    int uGridSize;
+    float uScale;
+} pc;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+
+    if ( i > pc.uGridSize || j > pc.uGridSize )
+        return;
+
+    float spacing = pc.uScale / float(pc.uGridSize);
+    uint idx = i * (pc.uGridSize + 1) + j;
+    vertices[idx].position = vec4(
+        float(i) * spacing - float(pc.uGridSize) * spacing / 2.0f,
+        0.0f,
+        float(j) * spacing - float(pc.uGridSize) * spacing / 2.0f,
+        1.0f
+    );
+    vertices[idx].normal = vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    vertices[idx].color = vec4(1.0f);
+
+    // Index generation
+    if ( i < pc.uGridSize && j < pc.uGridSize )
+    {
+        uint base = (i * pc.uGridSize + j) * 2;
+        indices[base] = idx;
+        indices[base + 1] = idx + 1;
+
+        base = (pc.uGridSize * pc.uGridSize + i * pc.uGridSize + j) * 2;
+        indices[base] = idx;
+        indices[base + 1] = idx + (pc.uGridSize + 1);
+    }
+}

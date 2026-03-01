@@ -11,6 +11,8 @@ find_package(Vulkan REQUIRED)
 # Find GLFW
 find_package(glfw3 3.3 REQUIRED)
 
+add_subdirectory(cpp_dependencies)
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_SOURCE_DIR}/src/imgui)
@@ -61,10 +63,28 @@ set(SOURCES
         src/Geometry.hpp
         src/utils/ShaderLoader.cpp
         src/utils/ShaderLoader.hpp
+        src/utils/ResourceManager.cpp
+        src/utils/ResourceManager.hpp
+        src/utils/enum_utils.hpp
+        src/rewrite/VulkanApp.cpp
+        src/rewrite/VulkanApp.hpp
+        src/rewrite/VkResourceManager.cpp
+        src/rewrite/VkResourceManager.hpp
+        src/rewrite/ImGuiHandler.cpp
+        src/rewrite/ImGuiHandler.hpp
+        src/rewrite/GridRenderer.cpp
+        src/rewrite/GridRenderer.hpp
+        src/rewrite/Types.cpp
+        src/rewrite/Types.hpp
+        src/rewrite/Geometry.cpp
+        src/rewrite/Geometry.hpp
 )
 
 # Create executable
 add_executable(GravitySimulator ${SOURCES})
 add_dependencies(GravitySimulator Shaders)
 # Link libraries
-target_link_libraries(GravitySimulator glfw Vulkan::Vulkan)
+target_link_libraries(GravitySimulator
+        glfw
+        Vulkan::Vulkan
+        cpp_dependencies)

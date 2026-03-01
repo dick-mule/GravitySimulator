@@ -10,9 +10,7 @@
 
 std::ostream& operator<<(std::ostream& os, const GeometryType& type)
 {
-    const char* geometryItems[] = {"Flat", "Spherical", "Hyperbolic"};
-    int currentGeometry = static_cast<int>(type);
-    os << geometryItems[currentGeometry];
+    os << magic_enum::enum_name(type);
     return os;
 }
 

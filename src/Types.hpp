@@ -49,6 +49,22 @@ struct Object
     size_t vertexCount;
 };
 
+inline void alignPosition(Object& obj)
+{
+    obj.modelMatrix = glm::translate(glm::mat4(1.0), obj.position);
+}
+
+struct WarpPushConstants {
+    int uNumObjects;
+    int uGridSize;
+    float uScale;
+    float uWarpStrength;
+    float maxDisplacement;
+    float minDisplacement;
+    float softeningLength;
+    float gravityStrength;
+};
+
 struct PushConstants
 {
     glm::mat4 model;
@@ -96,6 +112,7 @@ public:
     virtual void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) = 0;
     void setSize(float size) { m_Size = size; }
     [[nodiscard]] float getSize() const { return m_Size; }
+    [[nodiscard]] const Object* operator->() const { return &m_Object; }
 };
 
 class Cube final : public Shape

@@ -42,8 +42,7 @@ private:
     std::vector<vk::Framebuffer> m_SwapchainFramebuffers;
     vk::CommandPool m_CommandPool;
     std::vector<vk::CommandBuffer> m_CommandBuffers;
-    vk::Semaphore m_ImageAvailableSemaphore;
-    vk::Semaphore m_RenderFinishedSemaphore;
+    vk::Semaphore m_ImageAvailableSemaphore, m_RenderFinishedSemaphore;
     vk::Fence m_InFlightFence;
 
     const int m_WIDTH = 2000;

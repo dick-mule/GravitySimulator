@@ -1,0 +1,64 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+struct Vertex {
+    vec4 position; // vec3 + padding interpreted as vec4
+    vec4 normal;
+    vec4 color;
+};
+
+layout(std430, binding = 0) buffer VertexBuffer
+{
+    Vertex vertices[];
+};
+
+layout(std430, binding = 1) buffer IndexBuffer
+{
+    uint indices[];
+};
+
+layout(push_constant) uniform PushConstants
+{
+    int uGridSize;
+    float uScale;
+} pc;
+
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+
+    // Check bounds
+    if ( i > pc.uGridSize || j > pc.uGridSize )
+        return;
+
+    float k = pc.uScale;
+    float x = (float(i) / pc.uGridSize - 0.5f) * k;
+    float z = (float(j) / pc.uGridSize - 0.5f) * k;
+    float y = (x * x - z * z) / k;
+
+    // Compute vertex
+    uint idx = i * (pc.uGridSize + 1) + j;
+
+    vertices[idx].position = vec4(x, y, z, 1.0f);
+    vertices[idx].color = vec4(1.0);
+
+    float dy_dx = 2.0f * x / k; // ∂y/∂x = 2x/k <- Graphics adjusted
+    float dy_dz = -2.0f * z / k; // ∂y/∂z = -2z/k <- Graphics adjusted
+    vec3 tangent_x = vec3(1.0f, 0.0f, dy_dx);
+    vec3 tangent_y = vec3(0.0f, 1.0f, dy_dz);
+    vertices[idx].normal = vec4(normalize(cross(tangent_y, tangent_x)), 0.0f); // Normal is cross product of tangents
+
+    // Compute indices
+    if ( i < pc.uGridSize && j < pc.uGridSize )
+    {
+        uint quadIdx = i * pc.uGridSize + j;
+        uint offset = 4 * quadIdx;
+        indices[offset] = idx;
+        indices[offset + 1] = idx + 1;
+        indices[offset + 2] = idx;
+        indices[offset + 3] = idx + (pc.uGridSize + 1);
+    }
+}

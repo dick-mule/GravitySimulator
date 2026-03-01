@@ -6,18 +6,13 @@
 
 #include "Types.hpp" // Include shared types
 #include "utils/ShaderLoader.hpp"
+#include "utils/ResourceManager.hpp"
 #include <unordered_map>
 #include <sstream>
 
-enum class GeometryType { Flat, Spherical, Hyperbolic };
+enum class GeometryType : int { Flat, Spherical, Hyperbolic };
 
 std::ostream& operator<<(std::ostream& os, const GeometryType& type);
-
-struct ShaderProgram
-{
-    vk::ShaderModule vertexShader;
-    vk::ShaderModule fragmentShader;
-};
 
 class GeometryShader
 {
