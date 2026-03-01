@@ -4,12 +4,14 @@
 
 #pragma once
 
+#define GLM_FORCE_SWIZZLE     // or GLM_SWIZZLE for older versions
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> //translate, rotate, scale, perspective
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/norm.hpp> // Include the extension header
 #include <vulkan/vulkan.hpp>
 #include <string>
+#include <atomic>
 
 struct Vertex
 {

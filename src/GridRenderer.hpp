@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.hpp>
 #include <vector>
 #include <memory>
+#include <deque>
 
 #include "Geometry.hpp"
 #include <glm/gtc/type_ptr.hpp>

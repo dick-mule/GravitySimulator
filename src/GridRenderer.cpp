@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <imgui.h>
 
 static std::vector<char> readFile(const std::string& fileName)

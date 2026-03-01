@@ -554,7 +554,7 @@ void VulkanApp::mainLoop()
             recreateSwapchain();
         }
 
-        m_ImGuiHandler->newFrame();
+        ImGuiHandler::newFrame();
         m_GridRenderer->updateCamera();
         m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
         m_GridRenderer->updateGrid();

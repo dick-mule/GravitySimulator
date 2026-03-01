@@ -4,9 +4,9 @@
 
 #include "Geometry.hpp"
 
-#include <iostream>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/fast_trigonometry.hpp>
+#include <sstream>
 
 Geometry::Geometry(int grid_size, float grid_scale, float warp_strength)
     : m_GridSize(grid_size)
@@ -103,6 +103,8 @@ void FlatGeometry::warpGrid(
     if ( totalMass > 0.0f )
         centerOfMass /= totalMass;
 
+    float rs = m_WarpStrength * maxMass;   // or totalMass, or per-object below
+
     // Current time for ripple animation
     static float time = 0.0f;
     time += 0.016f; // Assuming ~60 FPS, adjust based on actual deltaTime
@@ -118,10 +120,19 @@ void FlatGeometry::warpGrid(
             const float mass = obj->m_Object.mass;
             if ( mass <= 0.0f )
                 continue;
+
             const float dist = computeDistance(vertex.position, obj->m_Object.position);
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            // Logarithmic scaling
+            // // Logarithmic scaling
             potential -= mass / softenedDist; // Gravitational potential
+            // Fixed: no .xz swizzle
+            // float r = m_WarpStrength * softenedDist;  // radial distance in xz plane
+            //
+            // float local_rs = m_WarpStrength * mass;
+            //
+            // if (r >= local_rs) {
+            //     potential -= 2.0f * sqrt(rs * (r - local_rs));
+            // }
         }
 
         // Base displacement from potential
