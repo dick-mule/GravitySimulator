@@ -191,10 +191,10 @@ void GridRenderer::generateGrid()
                   << "), Color(" << vecToString(m_Vertices[rev_iter].color) << ")" << std::endl;
     }
     const size_t n_Idx = m_Indices.size();
-    std::cout << "INDEX SIZE: " << n_Idx << std::endl;
-    for ( int i = 0; i < std::min(20, (int)n_Idx); ++i ) {
-        std::cout << "m_Indices " << i << ": " << m_Indices[i] << std::endl;
-    }
+    // std::cout << "INDEX SIZE: " << n_Idx << std::endl;
+    // for ( int i = 0; i < std::min(20, (int)n_Idx); ++i ) {
+    //     std::cout << "m_Indices " << i << ": " << m_Indices[i] << std::endl;
+    // }
 
     for ( int i = std::min(20, (int)m_Indices.size()); i >= 0; --i ) {
         int rev_iter = n_Idx - 1 - i;
@@ -883,13 +883,13 @@ void GridRenderer::updateCamera()
 void GridRenderer::updateGrid()
 {
     // Grid starts at vertex 0, cube at 441, sphere follows
-    // std::vector<float> masses;
-    // std::vector<glm::vec3> massivePositions;
-    // for ( const auto& shape : m_MassiveObjects )
-    // {
-    //     massivePositions.push_back(shape->m_Object.modelMatrix[3]);
-    //     masses.push_back(shape->m_Object.mass);
-    // }
+    std::vector<float> masses;
+    std::vector<glm::vec3> massivePositions;
+    for ( const auto& shape : m_MassiveObjects )
+    {
+        massivePositions.emplace_back(shape->m_Object.modelMatrix[3]);
+        masses.push_back(shape->m_Object.mass);
+    }
 
     constexpr float maxDisplacement = 100.0f;
     constexpr float minDistSquared = 0.01f;

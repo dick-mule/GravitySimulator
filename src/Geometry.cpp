@@ -415,14 +415,12 @@ void FlatGeometry::warpGrid(
     static float time = 0.0f;
     time += 0.016f; // Assuming ~60 FPS, adjust based on actual deltaTime
 
-    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    for ( Vertex& vertex : baseVertices )
     {
-        Vertex& vertex = baseVertices[v];
         // Compute gravitational potential at the vertex
         float potential = 0.0f;
-        for ( size_t i = 0; i < massiveObjects.size(); ++i )
+        for ( const auto& obj : massiveObjects )
         {
-            auto& obj = massiveObjects[i];
             const float mass = obj->m_Object.mass;
             if ( mass <= 0.0f )
                 continue;

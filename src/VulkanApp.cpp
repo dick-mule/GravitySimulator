@@ -565,7 +565,7 @@ void VulkanApp::mainLoop()
 
         m_ImGuiHandler->newFrame();
         m_GridRenderer->updateCamera();
-        // m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
+        m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
         m_GridRenderer->updateGrid();
         m_GridRenderer->renderCameraControls();
         m_ImGuiHandler->renderUI();

@@ -107,10 +107,10 @@ void ImGuiHandler::newFrame()
 
 void ImGuiHandler::renderUI()
 {
-    ImGui::SetNextWindowSize(ImVec2(400.0f, 300.0f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Gravity Simulator Controls");
-    ImGui::Text("Hello, Vulkan!");
-    ImGui::End();
+    // ImGui::SetNextWindowSize(ImVec2(400.0f, 300.0f), ImGuiCond_FirstUseEver);
+    // ImGui::Begin("Gravity Simulator Controls");
+    // ImGui::Text("Hello, Vulkan!");
+    // ImGui::End();
 
     ImGui::Render();
 }
