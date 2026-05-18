@@ -10,6 +10,7 @@
 
 #include "Geometry.hpp"
 #include <glm/gtc/type_ptr.hpp>
+#include <deque>
 
 
 class GridRenderer
@@ -33,10 +34,62 @@ public:
     void updateSimulation(float deltaTime);
     void renderCameraControls();
     void createDepthResources();
+
+    // === GPU Grid Toggle ===
+    // GPU is now the default high-performance path for grid warping.
+    // When adding new compute shaders or changing dispatch/descriptor logic, validate first
+    // with small dispatches + bounds checks + GPU-Assisted Validation before scaling up.
+    void setUseGPUGrid(bool enabled);
+    bool getUseGPUGrid() const { return m_UseGPUGrid; }
+
+    void updateBodiesBuffer();   // populates the bodies SSBO for the compute shader
+
+    // Ensures the compute descriptor set has valid bindings for both the vertex buffer (0)
+    // and bodies buffer (1). Call this after the descriptor set exists and whenever
+    // the underlying buffers change.
+    void ensureComputeDescriptors();
+
+    void recordComputeWork(vk::CommandBuffer commandBuffer);
+
     vk::Format getDepthFormat() const { return m_DepthFormat; }
     const std::vector<vk::ImageView>& getDepthImageViews() const { return m_DepthImageViews; }
 
 private:
+    // Configuration values declared early so they are safely initialized before any
+    // initializer-list expressions that depend on them (e.g. geometryFactory).
+    int m_GridSize = 800;
+    float m_GridScale = 320.0f;
+    float m_Gravity = 0.2f;
+    float m_WarpStrength = 1.0f;
+
+    // New tunable parameters for the improved GPU warping model
+    float m_GlobalSagStrength = 4.0f;    // TEMP: very aggressive for testing
+    float m_GlobalScale       = 60.0f;   // TEMP: aggressive for testing
+    float m_LocalWellStrength = 5.0f;    // TEMP: very aggressive for testing
+    float m_WellSteepness     = 1.8f;    // TEMP: aggressive for testing
+    float m_TimeStep = 0.05f;
+    float m_ZoomLevel = 0.;
+    float m_OrbitFactor = 1.0f;
+    float m_VelocityAngle = 0.0f;
+
+    // GPU grid deformation is now the default (high-performance path).
+    // The checkbox in the Controls window can still toggle back to CPU fallback for comparison.
+    bool m_UseGPUGrid = true;
+
+    // Bodies buffer for GPU compute (position + mass)
+    // This is the infrastructure we're building first (Option A)
+    vk::Buffer m_BodiesBuffer;
+    vk::DeviceMemory m_BodiesBufferMemory;
+    size_t m_BodiesBufferCapacity = 0;  // to avoid unnecessary recreation
+
+    glm::vec3 m_CenterOfMass = glm::vec3(0.0f);  // computed when GPU mode is active
+
+    // Buffer to store per-vertex delta (for recentering pass)
+    // Used for Spherical and Hyperbolic to remove global bias after warping
+    vk::Buffer m_DeltaBuffer;
+    vk::DeviceMemory m_DeltaBufferMemory;
+    size_t m_DeltaBufferCapacity = 0;
+
     std::shared_ptr<Geometry> m_Geometry;
     GeometryType m_CurrentGeometryType;
     vk::Device m_Device;
@@ -55,6 +108,14 @@ private:
     vk::DeviceMemory m_IndexBufferMemory;
     vk::PipelineLayout m_PipelineLayout;
     vk::Pipeline m_GraphicsPipeline, m_LinePipeline, m_TrianglePipeline;
+
+    // Compute pipeline for GPU-driven grid (positions + warping)
+    vk::PipelineLayout m_ComputePipelineLayout;
+    vk::Pipeline m_ComputePipeline;
+    vk::Pipeline m_RecenterPipeline;  // for the recentering entry point (Spherical/Hyperbolic bias removal)
+    vk::DescriptorSetLayout m_ComputeDescriptorSetLayout;
+    vk::DescriptorPool m_ComputeDescriptorPool;
+    vk::DescriptorSet m_ComputeDescriptorSet;
     PushConstants m_PushConstants;
     Camera m_Camera;
     std::vector<vk::Image> m_DepthImages;
@@ -64,17 +125,9 @@ private:
 
     Object m_GridObject;
     std::vector<std::shared_ptr<Shape>> m_MassiveObjects;
-    float m_ZoomLevel = 0.;
-    float m_Gravity = 0.2f;
-    int m_GridSize = 500;
-    float m_GridScale = 250.0f;
     float m_TotalEnergy = 0.0f;
     float m_KineticEnergy = 0.0f;
     float m_PotentialEnergy = 0.0f;
-    float m_TimeStep = 0.05f;
-    float m_VelocityAngle = 0.0f;
-    float m_OrbitFactor = 1.0f;
-    float m_WarpStrength = 1.0f;
 
     struct Trail {
         std::deque<glm::vec3> positions;
@@ -92,6 +145,7 @@ private:
     void createVertexBuffer();
     void createIndexBuffer();
     void createGraphicsPipeline();
+    void createComputePipeline();   // GPU grid generation / warping
     void updateGeometry(GeometryType type);
     void addShape(const std::shared_ptr<Shape>& shape) { m_MassiveObjects.push_back(shape); }
     void updateTrails();

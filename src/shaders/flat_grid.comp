@@ -1,0 +1,234 @@
+#version 450
+
+/*
+ * COMPUTE SHADER NOTES
+ *
+ * This shader owns the entire vertex buffer for the grid (positions, normals, colors).
+ * Because compute shaders have very few hardware safety nets, follow these when
+ * modifying or extending the shader:
+ *
+ * 1. GPU path is enabled by default (m_UseGPUGrid = true in GridRenderer).
+ * 2. All storage buffer bindings must be valid on the descriptor set before dispatch.
+ * 3. Dispatch size must cover exactly the vertex buffer (no out-of-bounds writes).
+ * 4. For new logic, start with tiny dispatches (1x1 or 4x4) + validation layers.
+ */
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+struct Vertex {
+    vec4 position;
+    vec4 normal;
+    vec4 color;
+};
+
+layout(std430, binding = 0) buffer VertexBuffer {
+    Vertex vertices[];
+};
+
+struct BodyData {
+    vec4  pos_mass;   // xyz = position, w = mass
+    float size;       // visual size (for Spherical warping)
+    float padding[3];
+};
+
+layout(std430, binding = 1) buffer BodiesBuffer {
+    BodyData bodies[];
+};
+
+layout(push_constant) uniform PushConstants {
+    int   uGridSize;
+    float uScale;
+    float G;
+    float warpStrength;
+    int   numBodies;
+
+    float maxDisplacement;
+    float softeningLength;
+
+    int   geometryType;   // 0=Flat, 1=Spherical, 2=Hyperbolic
+} pc;
+
+void warpFlat(vec3 basePos, uint idx);
+void warpSpherical(vec3 basePos, uint idx);
+void warpHyperbolic(vec3 basePos, uint idx);
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+
+    if (i > uint(pc.uGridSize) || j > uint(pc.uGridSize))
+        return;
+
+    uint vertsPerRow = uint(pc.uGridSize) + 1u;
+    uint idx = i * vertsPerRow + j;
+
+    if (idx >= vertsPerRow * vertsPerRow)
+        return;
+
+    float spacing = pc.uScale / float(pc.uGridSize);
+    float center  = float(pc.uGridSize) * spacing / 2.0f;
+
+    // Generate the correct base surface per geometry (straight port of CPU generateGrid)
+    vec3 basePos;
+
+    if (pc.geometryType == 0)
+    {
+        // Flat
+        basePos = vec3(
+            float(i) * spacing - center,
+            0.0f,
+            float(j) * spacing - center
+        );
+    }
+    else if (pc.geometryType == 1)
+    {
+        // Spherical
+        float pi = 3.14159265359;
+        float theta = pi * float(i) / float(pc.uGridSize);
+        float phi   = 2.0 * pi * float(j) / float(pc.uGridSize);
+        float R = pc.uScale * 0.5;
+        basePos = vec3(
+            R * sin(theta) * cos(phi),
+            R * cos(theta),
+            R * sin(theta) * sin(phi)
+        );
+    }
+    else
+    {
+        // Hyperbolic
+        float x = (float(i) / float(pc.uGridSize) - 0.5) * pc.uScale;
+        float z = (float(j) / float(pc.uGridSize) - 0.5) * pc.uScale;
+        float k = pc.uScale;
+        float y = (x * x - z * z) / k;
+        basePos = vec3(x, y, z);
+    }
+
+    // Dispatch to the correct per-geometry implementation
+    if (pc.geometryType == 0) {
+        warpFlat(basePos, idx);
+    } else if (pc.geometryType == 1) {
+        warpSpherical(basePos, idx);
+    } else if (pc.geometryType == 2) {
+        warpHyperbolic(basePos, idx);
+    }
+
+    // INDEX WRITING REMAINS DISABLED FOR SAFETY
+}
+
+// ====================== GEOMETRY-SPECIFIC IMPLEMENTATIONS ======================
+
+void warpFlat(vec3 basePos, uint idx)
+{
+    float potential = 0.0f;
+    for (int b = 0; b < pc.numBodies; ++b)
+    {
+        vec3 bodyPos = bodies[b].pos_mass.xyz;
+        float mass   = bodies[b].pos_mass.w;
+        float size   = bodies[b].size;
+        if (size <= 0.0f) continue;
+
+        float dist = distance(basePos, bodyPos);
+        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
+        potential -= mass / softenedDist;  // Flat uses mass for stronger warping
+    }
+
+    float displacement = -potential * pc.warpStrength;
+    displacement = min(displacement, pc.maxDisplacement);
+    displacement = max(displacement, -pc.maxDisplacement);
+
+    vec3 finalPos = basePos;
+    finalPos.y -= displacement;
+
+    vertices[idx].position = vec4(finalPos, 1.0f);
+    vertices[idx].normal   = vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    vertices[idx].color    = vec4(1.0f);
+}
+
+void warpSpherical(vec3 basePos, uint idx)
+{
+    float potential = 0.0f;
+    for (int b = 0; b < pc.numBodies; ++b)
+    {
+        vec3 bodyPos = bodies[b].pos_mass.xyz;
+        float mass   = bodies[b].pos_mass.w;
+        float size   = bodies[b].size;
+        if (size <= 0.0f) continue;
+
+        float r1 = length(basePos);
+        float r2 = length(bodyPos);
+        if (r1 < 0.01f || r2 < 0.01f) continue;
+
+        float dist = distance(basePos, bodyPos);
+        if (dist < 0.01f) dist = 0.01f;
+
+        float dist_from_mass = length(basePos - bodyPos);
+        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
+        float damping = 1.0 / max(1.0f, sqrt(dist_from_mass));
+
+        potential -= 3.0f * size * damping * dist / softenedDist;  // Spherical uses visual size (getSize) for the tuned look
+    }
+
+    float displacement = potential * pc.warpStrength;
+    displacement = min(displacement, pc.maxDisplacement);
+    displacement = max(displacement, -pc.maxDisplacement);
+
+    float R = pc.uScale * 0.5f;
+    vec3 radialDir = normalize(basePos);
+    float newRadius = max(R + 30.0f * displacement, 0.5f * R);
+
+    vec3 finalPos = radialDir * newRadius;
+
+    vertices[idx].position = vec4(finalPos, 1.0f);
+    vertices[idx].normal   = vec4(normalize(finalPos), 0.0);
+    vertices[idx].color    = vec4(1.0f);
+}
+
+void warpHyperbolic(vec3 basePos, uint idx)
+{
+    float R = pc.uScale * 0.5f;
+    float k = pc.uScale;
+
+    float rSquared = basePos.x * basePos.x + basePos.z * basePos.z;
+    float damping = 1.0f - rSquared / (R * R);
+    if (damping < 0.0f) damping = 0.0f;
+
+    float potential = 0.0f;
+    for (int b = 0; b < pc.numBodies; ++b)
+    {
+        vec3 bodyPos = bodies[b].pos_mass.xyz;
+        float mass   = bodies[b].pos_mass.w;
+        float size   = bodies[b].size;
+        if (size <= 0.0f) continue;
+
+        vec3 pos1 = basePos;
+        vec3 pos2 = bodyPos;
+
+        float diffY = (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k;
+        vec3 diff = vec3(pos2.x - pos1.x, diffY, pos2.z - pos1.z);
+
+        float dist = length(diff);
+        if (dist >= 1e30f) continue;
+
+        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
+        potential -= mass / softenedDist;  // Hyperbolic uses mass for stronger effect (matching CPU)
+    }
+
+    float len = length(basePos);
+    float logTerm = clamp(1.0f + log(abs(len)), 1.0f, 5.0f);
+
+    float displacement = -potential * pc.warpStrength * logTerm;
+    displacement = min(displacement, pc.maxDisplacement);
+    displacement = max(displacement, -pc.maxDisplacement);
+
+    float x = basePos.x;
+    float z = basePos.z;
+    vec3 trueNormal = normalize(vec3(-2.0f * x / k, 1.0f, 2.0f * z / k));
+    vec3 visualNormal = normalize(mix(vec3(0.0f, 1.0f, 0.0f), trueNormal, 0.5f));
+
+    vec3 finalPos = basePos - displacement * visualNormal;
+
+    vertices[idx].position = vec4(finalPos, 1.0f);
+    vertices[idx].normal   = vec4(visualNormal, 0.0);
+    vertices[idx].color    = vec4(1.0f);
+}

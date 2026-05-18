@@ -557,9 +557,17 @@ void VulkanApp::mainLoop()
         m_ImGuiHandler->newFrame();
         m_GridRenderer->updateCamera();
         m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
+
+        // Infrastructure step (Option A): keep bodies buffer up to date for the GPU
+        if (m_GridRenderer->getUseGPUGrid())
+        {
+            m_GridRenderer->updateBodiesBuffer();
+            m_GridRenderer->ensureComputeDescriptors();   // ensure both bindings are fresh every frame
+        }
+
         m_GridRenderer->updateGrid();
         m_GridRenderer->renderCameraControls();
-        m_ImGuiHandler->renderUI();
+        m_ImGuiHandler->renderUI(m_GridRenderer.get());
         drawFrame();
     }
 
@@ -585,6 +593,9 @@ void VulkanApp::drawFrame()
 
     vk::CommandBufferBeginInfo beginInfo{};
     m_CommandBuffers[imageIndex].begin(beginInfo);
+
+    // Let the grid renderer do its GPU compute work (writes directly to the vertex storage buffer)
+    m_GridRenderer->recordComputeWork(m_CommandBuffers[imageIndex]);
 
     vk::RenderPassBeginInfo renderPassInfo{};
     renderPassInfo.setRenderPass(m_RenderPass)

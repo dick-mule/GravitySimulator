@@ -25,7 +25,9 @@ public:
 
     void init();
     static void newFrame();
-    void renderUI();
+    // renderUI now takes a GridRenderer so the GPU safety toggle can be controlled
+    // directly from the UI while still respecting the hard safety gate in GridRenderer.
+    void renderUI(class GridRenderer* gridRenderer);
     static void renderDrawData(vk::CommandBuffer commandBuffer);
 
 private:

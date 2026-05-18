@@ -7,19 +7,112 @@
 #include <fstream>
 #include <iostream>
 #include <imgui.h>
+#include <sstream>
+#include <filesystem>
+#include <vector>
+#include <random>
 
-static std::vector<char> readFile(const std::string& fileName)
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+
+namespace
 {
-    std::ifstream file(fileName, std::ios::ate | std::ios::binary);
-    if ( !file.is_open() )
-        throw std::runtime_error("Failed to open " + fileName);
-    const size_t fileSize = file.tellg();
-    std::vector<char> shaderCode(fileSize);
-    file.seekg(0);
-    file.read(shaderCode.data(), fileSize);
-    file.close();
-    return shaderCode;
-}
+    std::filesystem::path getExecutableDir()
+    {
+        namespace fs = std::filesystem;
+        fs::path exePath;
+#if defined(__APPLE__)
+        char path[1024];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0)
+        {
+            std::error_code ec;
+            exePath = fs::canonical(fs::path(path), ec);
+            if (!ec)
+                return exePath.parent_path();
+        }
+#elif defined(__linux__)
+        char path[1024];
+        ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+        if (len != -1)
+        {
+            path[len] = '\0';
+            std::error_code ec;
+            exePath = fs::canonical(fs::path(path), ec);
+            if (!ec)
+                return exePath.parent_path();
+        }
+#elif defined(_WIN32)
+        wchar_t path[MAX_PATH];
+        if (GetModuleFileNameW(NULL, path, MAX_PATH) > 0)
+        {
+            std::error_code ec;
+            exePath = fs::canonical(fs::path(path), ec);
+            if (!ec)
+                return exePath.parent_path();
+        }
+#endif
+        return fs::current_path(); // fallback
+    }
+
+    static std::vector<char> readFile(const std::string& fileName)
+    {
+        namespace fs = std::filesystem;
+        static const fs::path exeDir = getExecutableDir();
+
+        // Search in multiple likely locations so the app can be launched from IDE, terminal, etc.
+        const std::vector<fs::path> candidates = {
+            fs::path(fileName),                                   // CWD (original behavior)
+            exeDir / fileName,
+            exeDir / ".." / fileName,
+            exeDir / "cmake-build-debug" / fileName,
+            fs::current_path() / "cmake-build-debug" / fileName,
+            fs::current_path() / fileName,
+            exeDir / ".." / "cmake-build-debug" / fileName,
+        };
+
+        for (const auto& candidate : candidates)
+        {
+            std::error_code ec;
+            fs::path p = candidate;
+            if (fs::exists(p, ec) && !ec)
+            {
+                std::ifstream file(p, std::ios::ate | std::ios::binary);
+                if (file.is_open())
+                {
+                    const size_t fileSize = static_cast<size_t>(file.tellg());
+                    std::vector<char> shaderCode(fileSize);
+                    file.seekg(0);
+                    file.read(shaderCode.data(), fileSize);
+                    return shaderCode;
+                }
+            }
+            // Also try canonical in case of symlinks
+            fs::path canon = fs::canonical(candidate, ec);
+            if (!ec && fs::exists(canon))
+            {
+                std::ifstream file(canon, std::ios::ate | std::ios::binary);
+                if (file.is_open())
+                {
+                    const size_t fileSize = static_cast<size_t>(file.tellg());
+                    std::vector<char> shaderCode(fileSize);
+                    file.seekg(0);
+                    file.read(shaderCode.data(), fileSize);
+                    return shaderCode;
+                }
+            }
+        }
+
+        throw std::runtime_error("Failed to open " + fileName +
+                                 " (searched near CWD and executable dir: " + exeDir.string() + ")");
+    }
+} // anonymous namespace
+
 
 static std::string vecToString(const glm::vec3& vec)
 {
@@ -60,7 +153,7 @@ GridRenderer::GridRenderer(
     , m_DepthFormat()
     , m_GridObject()
 {
-    m_Geometry = geometryFactory(geometryType, m_GridSize, m_GridScale);
+    // m_Geometry already constructed in the initializer list using the now-safely-initialized grid params
     Object centralObj{};
     centralObj.mass = 20000.0; // Very massive
     centralObj.position = glm::vec3(0.0, 0.0, 0.0);
@@ -70,20 +163,24 @@ GridRenderer::GridRenderer(
     m_MassiveObjects.push_back(centralShape); // Using Sphere for simplicity
     centralShape->setSize(1.0 + std::log(centralShape->m_Object.mass / std::sqrt(m_GridScale))); // Larger orbiters
 
-    // Add orbiting bodies
-    constexpr int numOrbiters = 10; // Start with 5, adjust as needed
+    // Add orbiting bodies (increased count to stress-test GPU compute path with more bodies in the warp loop)
+    constexpr int numOrbiters = 40;
     const float G = m_Gravity; // 0.2f from your setup
     const float centralMass = centralObj.mass;
     float totalMass = centralMass;
 
-    // Scale radii based on m_GridScale
-    const float baseRadius = m_GridScale * 0.05; // 5% of grid scale as starting radius
-    const float radiusStep = m_GridScale * 0.5 / numOrbiters; // Spread across 10% of grid
+    // Scale radii based on m_GridScale - wider spread for larger count
+    const float baseRadius = m_GridScale * 0.06f;
+    const float radiusStep = (m_GridScale * 0.68f) / numOrbiters;
+
+    // Randomize orbiting body masses for more natural / interesting warping wells
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> massDist(3.0f, 72.0f);
 
     for ( int i = 0; i < numOrbiters; ++i )
     {
         Object orbiter{};
-        orbiter.mass = 10.0 + static_cast<float>(i) * 5.0;
+        orbiter.mass = massDist(rng);
 
         // Circular orbit parameters
         float radius = baseRadius + i * radiusStep;
@@ -146,10 +243,20 @@ GridRenderer::~GridRenderer()
         m_Device.destroyBuffer(m_TrailIndexBuffer);
     if ( m_TrailIndexBufferMemory )
         m_Device.freeMemory(m_TrailIndexBufferMemory);
-    if ( m_VertexBuffer )
+    if ( m_IndexBuffer )
         m_Device.destroyBuffer(m_IndexBuffer);
     if ( m_IndexBufferMemory )
         m_Device.freeMemory(m_IndexBufferMemory);
+
+    // Compute resources
+    if ( m_ComputePipeline )
+        m_Device.destroyPipeline(m_ComputePipeline);
+    if ( m_ComputePipelineLayout )
+        m_Device.destroyPipelineLayout(m_ComputePipelineLayout);
+    if ( m_ComputeDescriptorSetLayout )
+        m_Device.destroyDescriptorSetLayout(m_ComputeDescriptorSetLayout);
+    if ( m_ComputeDescriptorPool )
+        m_Device.destroyDescriptorPool(m_ComputeDescriptorPool);
     for ( auto imageView : m_DepthImageViews )
         m_Device.destroyImageView(imageView);
     for ( auto image : m_DepthImages )
@@ -164,6 +271,10 @@ void GridRenderer::init()
     createVertexBuffer();
     createIndexBuffer();
     createGraphicsPipeline();
+    createComputePipeline();
+
+    // Now that the compute descriptor set exists, write the current vertex buffer into it.
+    ensureComputeDescriptors();
 }
 
 void GridRenderer::generateGrid()
@@ -295,11 +406,12 @@ void GridRenderer::createVertexBuffer()
     memcpy(data, m_Vertices.data(), bufferSize);
     m_Device.unmapMemory(stagingBufferMemory);
 
-    // Create vertex buffer
+    // Create vertex buffer — now also usable as storage buffer so compute shaders can write directly to it
     m_VertexBuffer = createBuffer(
         bufferSize,
         vk::BufferUsageFlagBits::eTransferDst |
-        vk::BufferUsageFlagBits::eVertexBuffer);
+        vk::BufferUsageFlagBits::eVertexBuffer |
+        vk::BufferUsageFlagBits::eStorageBuffer);
     m_VertexBufferMemory = allocateBufferMemory(m_VertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
     m_Device.bindBufferMemory(m_VertexBuffer, m_VertexBufferMemory, 0);
 
@@ -309,6 +421,286 @@ void GridRenderer::createVertexBuffer()
     // Clean up staging buffer
     m_Device.destroyBuffer(stagingBuffer);
     m_Device.freeMemory(stagingBufferMemory);
+
+    // Create / resize delta buffer for recentering (one float per vertex)
+    const size_t numVertices = m_Vertices.size();
+    const vk::DeviceSize deltaSize = numVertices * sizeof(float);
+
+    if (numVertices > m_DeltaBufferCapacity)
+    {
+        if (m_DeltaBuffer)
+        {
+            m_Device.destroyBuffer(m_DeltaBuffer);
+            m_Device.freeMemory(m_DeltaBufferMemory);
+        }
+
+        m_DeltaBuffer = createBuffer(deltaSize, vk::BufferUsageFlagBits::eStorageBuffer);
+        m_DeltaBufferMemory = allocateBufferMemory(m_DeltaBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        m_Device.bindBufferMemory(m_DeltaBuffer, m_DeltaBufferMemory, 0);
+
+        m_DeltaBufferCapacity = numVertices;
+    }
+
+    // NOTE: We no longer write the vertex descriptor here because m_ComputeDescriptorSet
+    // may not exist yet (createVertexBuffer is called before createComputePipeline in init()).
+    // The descriptor write now happens in ensureComputeDescriptors() after the set is created.
+}
+
+// === GPU Grid Toggle ===
+// This function is the gate for compute work (now enabled by default).
+void GridRenderer::setUseGPUGrid(bool enabled)
+{
+    if (m_UseGPUGrid == enabled)
+        return;
+
+    m_UseGPUGrid = enabled;
+
+    if (enabled)
+    {
+        ensureComputeDescriptors();
+    }
+}
+
+// === Bodies Buffer Update (Infrastructure for GPU Warping) ===
+// This method is part of Option A: we wire up the data path first,
+// before implementing the actual gravitational math in the shader.
+void GridRenderer::updateBodiesBuffer()
+{
+    if (!m_UseGPUGrid)
+        return;
+
+    const size_t numBodies = m_MassiveObjects.size();
+
+    // Compute center of mass (used by the improved GPU warping model)
+    glm::vec3 com(0.0f);
+    float totalMass = 0.0f;
+    for (size_t i = 0; i < numBodies; ++i)
+    {
+        const auto& obj = m_MassiveObjects[i]->m_Object;
+        com += glm::vec3(obj.position) * obj.mass;
+        totalMass += obj.mass;
+    }
+    if (totalMass > 0.0f)
+        com /= totalMass;
+    m_CenterOfMass = com;
+
+    // Local definition + local vector during infrastructure phase (Option A)
+    struct GPUBody {
+        glm::vec4 position_mass; // xyz = position, w = mass (for Flat/Hyperbolic warping)
+        float     size;          // visual size (for Spherical warping, and rendering)
+        float     padding[3];
+    };
+
+    std::vector<GPUBody> bodiesStaging(numBodies);
+    for (size_t i = 0; i < numBodies; ++i)
+    {
+        const auto& shape = m_MassiveObjects[i];
+        const auto& obj = shape->m_Object;
+        bodiesStaging[i].position_mass = glm::vec4(obj.position, obj.mass);
+        bodiesStaging[i].size          = shape->getSize();
+    }
+
+    const size_t requiredBytes = numBodies * sizeof(GPUBody);
+
+    // Recreate buffer if we need more capacity (simple growth strategy)
+    if (numBodies > m_BodiesBufferCapacity)
+    {
+        if (m_BodiesBuffer)
+        {
+            m_Device.destroyBuffer(m_BodiesBuffer);
+            m_Device.freeMemory(m_BodiesBufferMemory);
+        }
+
+        const size_t newCapacity = std::max(numBodies, size_t(16)); // minimum reasonable size
+        const vk::DeviceSize bufferSize = newCapacity * sizeof(GPUBody);
+
+        m_BodiesBuffer = createBuffer(
+            bufferSize,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+            vk::BufferUsageFlagBits::eTransferDst);
+
+        m_BodiesBufferMemory = allocateBufferMemory(
+            m_BodiesBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+        m_Device.bindBufferMemory(m_BodiesBuffer, m_BodiesBufferMemory, 0);
+
+        m_BodiesBufferCapacity = newCapacity;
+    }
+
+    if (numBodies == 0)
+        return;
+
+    // Stage upload
+    const vk::DeviceSize uploadSize = numBodies * sizeof(GPUBody);
+    const auto stagingBuffer = createBuffer(uploadSize, vk::BufferUsageFlagBits::eTransferSrc);
+    const auto stagingMemory = allocateBufferMemory(
+        stagingBuffer,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    m_Device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
+
+    void* mapped;
+    m_Device.mapMemory(stagingMemory, 0, uploadSize, {}, &mapped);
+    memcpy(mapped, bodiesStaging.data(), uploadSize);
+    m_Device.unmapMemory(stagingMemory);
+
+    copyBuffer(stagingBuffer, m_BodiesBuffer, uploadSize);
+
+    m_Device.destroyBuffer(stagingBuffer);
+    m_Device.freeMemory(stagingMemory);
+
+    // Update the descriptor so the compute shader sees the latest bodies buffer
+    if (m_ComputeDescriptorSet)
+    {
+        vk::DescriptorBufferInfo bufInfo{};
+        bufInfo.setBuffer(m_BodiesBuffer)
+               .setOffset(0)
+               .setRange(VK_WHOLE_SIZE);
+
+        vk::WriteDescriptorSet write{};
+        write.setDstSet(m_ComputeDescriptorSet)
+             .setDstBinding(1)                              // binding 1 = bodies
+             .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+             .setDescriptorCount(1)
+             .setPBufferInfo(&bufInfo);
+
+        m_Device.updateDescriptorSets(write, {});
+    }
+}
+
+// Ensures both compute descriptor bindings are valid.
+// This fixes the "descriptor never updated" errors we were seeing on dispatch.
+void GridRenderer::ensureComputeDescriptors()
+{
+    if (!m_ComputeDescriptorSet)
+        return;
+
+    // Binding 0 - Vertex buffer
+    if (m_VertexBuffer)
+    {
+        vk::DescriptorBufferInfo bufInfo{};
+        bufInfo.setBuffer(m_VertexBuffer)
+               .setOffset(0)
+               .setRange(VK_WHOLE_SIZE);
+
+        vk::WriteDescriptorSet write{};
+        write.setDstSet(m_ComputeDescriptorSet)
+             .setDstBinding(0)
+             .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+             .setDescriptorCount(1)
+             .setPBufferInfo(&bufInfo);
+
+        m_Device.updateDescriptorSets(write, {});
+    }
+
+    // Binding 1 - Bodies buffer
+    if (m_BodiesBuffer)
+    {
+        vk::DescriptorBufferInfo bufInfo{};
+        bufInfo.setBuffer(m_BodiesBuffer)
+               .setOffset(0)
+               .setRange(VK_WHOLE_SIZE);
+
+        vk::WriteDescriptorSet write{};
+        write.setDstSet(m_ComputeDescriptorSet)
+             .setDstBinding(1)
+             .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+             .setDescriptorCount(1)
+             .setPBufferInfo(&bufInfo);
+
+        m_Device.updateDescriptorSets(write, {});
+    }
+}
+
+void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
+{
+    // =====================================================================
+    // MILESTONE: GPU Base Grid Generation (0 Bodies)
+    // =====================================================================
+    // This is the active development target: Prove the compute shader can
+    // safely and correctly write the entire vertex buffer every frame.
+    //
+    // Current behavior when enabled:
+    //   - Shader generates a flat grid (no warping yet).
+    //   - updateGrid() skips CPU deformation + upload (see above).
+    //   - We rely on the storage buffer write + barrier for correctness.
+    //
+    // Do not proceed to bodies + warping math until this milestone is stable
+    // (no device lost, correct visuals, good bounds checking).
+    // =====================================================================
+
+    // GPU path gate (returns early when CPU fallback is selected via checkbox)
+    if (!m_UseGPUGrid)
+        return;
+
+    if (!m_ComputePipeline || !m_ComputeDescriptorSet)
+        return;
+
+    // Make sure descriptors are written (handles cases where GPU mode is enabled later)
+    ensureComputeDescriptors();
+
+    // Bind compute pipeline and descriptor set
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, m_ComputePipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                     m_ComputePipelineLayout,
+                                     0, 1, &m_ComputeDescriptorSet,
+                                     0, nullptr);
+
+    // Push constants for straight-port of all three geometries
+    struct PushConstants {
+        int32_t gridSize;
+        float   scale;
+        float   G;
+        float   warpStrength;
+        int32_t numBodies;
+
+        float   maxDisplacement;
+        float   softeningLength;
+        int32_t geometryType;   // 0=Flat, 1=Spherical, 2=Hyperbolic
+    };
+
+    PushConstants pc{};
+    pc.gridSize        = m_GridSize;
+    pc.scale           = m_GridScale;
+    pc.G               = m_Gravity;
+    pc.warpStrength    = m_WarpStrength;
+    pc.numBodies       = static_cast<int32_t>(m_MassiveObjects.size());
+
+    // Match the constants the CPU path currently uses
+    pc.maxDisplacement = 100.0f;
+    pc.softeningLength = 1.0f;
+
+    // Map our enum to the shader's expected values
+    switch (m_CurrentGeometryType)
+    {
+        case GeometryType::Spherical:  pc.geometryType = 1; break;
+        case GeometryType::Hyperbolic: pc.geometryType = 2; break;
+        default:                       pc.geometryType = 0; break; // Flat
+    }
+
+    commandBuffer.pushConstants(m_ComputePipelineLayout,
+                                vk::ShaderStageFlagBits::eCompute,
+                                0, sizeof(pc), &pc);
+
+    // Dispatch — 32x32 local workgroup size as declared in the shader
+    uint32_t groupsX = (m_GridSize + 31) / 32;
+    uint32_t groupsY = (m_GridSize + 31) / 32;
+    commandBuffer.dispatch(groupsX, groupsY, 1);
+
+    // Barrier: compute writes to the vertex buffer must be visible to vertex input
+    vk::MemoryBarrier barrier{};
+    barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
+           .setDstAccessMask(vk::AccessFlagBits::eVertexAttributeRead);
+
+    commandBuffer.pipelineBarrier(
+        vk::PipelineStageFlagBits::eComputeShader,
+        vk::PipelineStageFlagBits::eVertexInput,
+        {},
+        barrier, {}, {}
+    );
+
+    // (Recenter dispatch disabled for now — will re-add cleanly later)
 }
 
 void GridRenderer::createIndexBuffer()
@@ -518,6 +910,107 @@ void GridRenderer::createGraphicsPipeline()
     // Clean up shader modules
     m_Device.destroyShaderModule(vertShaderModule);
     m_Device.destroyShaderModule(fragShaderModule);
+}
+
+void GridRenderer::createComputePipeline()
+{
+    // Load the flat grid compute shader (we will evolve this into full warping later)
+    std::vector<char> compCode = readFile("flat_grid.comp.spv");
+
+    vk::ShaderModuleCreateInfo compModuleInfo{};
+    compModuleInfo.setCodeSize(compCode.size())
+                  .setPCode(reinterpret_cast<const uint32_t*>(compCode.data()));
+    vk::ShaderModule compShaderModule = m_Device.createShaderModule(compModuleInfo);
+
+    // Descriptor set layout for compute shader (infrastructure phase)
+    // Binding 0: Vertex buffer (positions written by compute)
+    // Binding 1: Bodies buffer (position + mass of massive objects) - added for Option A
+    vk::DescriptorSetLayoutBinding vertexBinding{};
+    vertexBinding.setBinding(0)
+               .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+               .setDescriptorCount(1)
+               .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+
+    vk::DescriptorSetLayoutBinding bodiesBinding{};
+    bodiesBinding.setBinding(1)
+               .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+               .setDescriptorCount(1)
+               .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+
+    // Binding 2: small reduction buffer for recentering (Spherical/Hyperbolic)
+    vk::DescriptorSetLayoutBinding deltaBinding{};
+    deltaBinding.setBinding(2)
+                .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                .setDescriptorCount(1)
+                .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+
+    std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { vertexBinding, bodiesBinding, deltaBinding };
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.setBindingCount(static_cast<uint32_t>(bindings.size()))
+            .setPBindings(bindings.data());
+
+    m_ComputeDescriptorSetLayout = m_Device.createDescriptorSetLayout(layoutInfo);
+
+    // Push constant range sized for the improved warping model
+    vk::PushConstantRange pushConstantRange{};
+    pushConstantRange.setStageFlags(vk::ShaderStageFlagBits::eCompute)
+                     .setOffset(0)
+                     .setSize(64);   // safe size for current + future parameters
+
+    // Pipeline layout
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.setSetLayoutCount(1)
+                      .setPSetLayouts(&m_ComputeDescriptorSetLayout)
+                      .setPushConstantRangeCount(1)
+                      .setPPushConstantRanges(&pushConstantRange);
+
+    m_ComputePipelineLayout = m_Device.createPipelineLayout(pipelineLayoutInfo);
+
+    // Compute pipeline
+    vk::PipelineShaderStageCreateInfo compStage{};
+    compStage.setStage(vk::ShaderStageFlagBits::eCompute)
+             .setModule(compShaderModule)
+             .setPName("main");
+
+    vk::ComputePipelineCreateInfo computePipelineInfo{};
+    computePipelineInfo.setStage(compStage)
+                       .setLayout(m_ComputePipelineLayout);
+
+    auto result = m_Device.createComputePipeline(nullptr, computePipelineInfo);
+    if (result.result != vk::Result::eSuccess)
+        throw std::runtime_error("Failed to create compute pipeline for grid");
+
+    m_ComputePipeline = result.value;
+
+    // (Recenter pipeline temporarily disabled — we only have "main" entry point right now)
+    // TODO: re-add a clean recentering pass later (either inside main() or as a separate shader)
+    m_RecenterPipeline = nullptr;
+
+    std::cout << "[GPU] Compute pipeline created successfully from flat_grid.comp.spv\n";
+
+    // Clean up shader module (pipeline keeps its own reference)
+    m_Device.destroyShaderModule(compShaderModule);
+
+    // Create descriptor pool + allocate the compute descriptor set
+    vk::DescriptorPoolSize poolSize{};
+    poolSize.setType(vk::DescriptorType::eStorageBuffer).setDescriptorCount(4);
+
+    vk::DescriptorPoolCreateInfo poolCreate{};
+    poolCreate.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
+              .setMaxSets(4)
+              .setPoolSizeCount(1)
+              .setPPoolSizes(&poolSize);
+
+    m_ComputeDescriptorPool = m_Device.createDescriptorPool(poolCreate);
+
+    vk::DescriptorSetAllocateInfo allocInfo{};
+    allocInfo.setDescriptorPool(m_ComputeDescriptorPool)
+             .setDescriptorSetCount(1)
+             .setPSetLayouts(&m_ComputeDescriptorSetLayout);
+
+    auto allocated = m_Device.allocateDescriptorSets(allocInfo);
+    m_ComputeDescriptorSet = allocated[0];
 }
 
 void GridRenderer::updateGeometry(GeometryType type)
@@ -832,6 +1325,18 @@ void GridRenderer::updateCamera()
 
 void GridRenderer::updateGrid()
 {
+    // When GPU grid is active we skip CPU-side warpGrid + full vertex upload.
+    // The compute shader (recordComputeWork) owns the entire vertex buffer every frame.
+    if (m_UseGPUGrid)
+    {
+        // GPU path active — compute shader writes positions/normals/colors directly.
+        // Indices remain static after init. Massive-body N-body sim still runs on CPU.
+        return;
+    }
+
+    // ===================== CPU FALLBACK PATH =====================
+    // Original behavior preserved when GPU mode is disabled.
+
     // Grid starts at vertex 0, cube at 441, sphere follows
     std::vector<float> masses;
     std::vector<glm::vec3> massivePositions;
@@ -877,6 +1382,7 @@ void GridRenderer::updateSimulation(float deltaTime)
     const float R = m_GridScale / 2.0f;
     deltaTime = std::min(deltaTime, m_TimeStep);
     // Step 1: Compute accelerations for all objects (Verlet Method)
+    #pragma omp parallel for schedule(dynamic)
     for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
     {
         auto& obj = m_MassiveObjects[i]->m_Object;
@@ -885,11 +1391,15 @@ void GridRenderer::updateSimulation(float deltaTime)
         obj.acceleration = glm::vec3(0.0f);
     }
 
-    // Step 2: Compute pairwise forces symmetrically
+    // Step 2: Compute pairwise forces symmetrically (OpenMP parallelized, thread-safe)
     constexpr float softeningLength = 1.0f;
-    for ( size_t i = 0; i < m_MassiveObjects.size(); ++i )
+    const size_t nBodies = m_MassiveObjects.size();
+    std::vector<glm::vec3> deltaAcc(nBodies, glm::vec3(0.0f));
+
+    #pragma omp parallel for schedule(dynamic)
+    for ( size_t i = 0; i < nBodies; ++i )
     {
-        for ( size_t j = i + 1; j < m_MassiveObjects.size(); ++j )
+        for ( size_t j = i + 1; j < nBodies; ++j )
         {   // Only iterate over j > i to avoid double-counting
             auto& shape1 = m_MassiveObjects[i];
             auto& shape2 = m_MassiveObjects[j];
@@ -960,12 +1470,25 @@ void GridRenderer::updateSimulation(float deltaTime)
 
             // Compute force on shape1 due to shape2
             float force1 = m_Gravity * shape2->m_Object.mass / (softenedDist * softenedDist);
-            shape1->m_Object.acceleration += force1 * direction;
+            deltaAcc[i] += force1 * direction;
 
             // Compute force on shape2 due to shape1 (equal and opposite)
             float force2 = m_Gravity * shape1->m_Object.mass / (softenedDist * softenedDist);
-            shape2->m_Object.acceleration -= force2 * direction; // Opposite direction
+            // Thread-safe update for j (i is safe because each outer iteration is owned by one thread)
+            #pragma omp atomic
+            deltaAcc[j].x -= (force2 * direction).x;
+            #pragma omp atomic
+            deltaAcc[j].y -= (force2 * direction).y;
+            #pragma omp atomic
+            deltaAcc[j].z -= (force2 * direction).z;
         }
+    }
+
+    // Merge thread-local accumulations back to the objects (single-threaded, cheap)
+    #pragma omp parallel for schedule(dynamic)
+    for ( size_t i = 0; i < nBodies; ++i )
+    {
+        m_MassiveObjects[i]->m_Object.acceleration += deltaAcc[i];
     }
 
     // Step 3: Update positions using the geometry's rules
@@ -1021,6 +1544,11 @@ void GridRenderer::updateSimulation(float deltaTime)
 
 void GridRenderer::renderCameraControls()
 {
+    // Position the detailed controls on the right side so it doesn't fight the status panel
+    ImGui::SetNextWindowPos(ImVec2(1920 - 380, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_FirstUseEver);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
     ImGui::Begin("Controls");
 
     // Geometry selection
@@ -1032,6 +1560,9 @@ void GridRenderer::renderCameraControls()
                   << " vs. " << geometryItems[currentGeometry] << std::endl;
         updateGeometry(static_cast<GeometryType>(currentGeometry));
     }
+
+    // GPU toggle - moved here so it's grouped with the geometry selector
+    ImGui::Checkbox("Use GPU Grid", &m_UseGPUGrid);
 
     // Camera controls
     glm::vec3 pos = m_Camera.getPosition();
@@ -1213,6 +1744,7 @@ void GridRenderer::renderCameraControls()
     // }
 
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 vk::Format GridRenderer::findSupportedFormat(

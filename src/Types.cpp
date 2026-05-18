@@ -14,15 +14,23 @@ vk::VertexInputBindingDescription Vertex::getBindingDescription()
     return bindingDescription;
 }
 
-std::array<vk::VertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions()
+std::array<vk::VertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions()
 {
-    std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions{};
+    std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{};
+    // Must match grid.vert exactly:
+    //   location 0: inPosition (position)
+    //   location 1: inNormal   (normal)   -- even if currently unused by shader
+    //   location 2: inColor    (color)
     attributeDescriptions[0].setBinding(0)
                             .setLocation(0)
                             .setFormat(vk::Format::eR32G32B32Sfloat)
                             .setOffset(offsetof(Vertex, position));
     attributeDescriptions[1].setBinding(0)
                             .setLocation(1)
+                            .setFormat(vk::Format::eR32G32B32Sfloat)
+                            .setOffset(offsetof(Vertex, normal));
+    attributeDescriptions[2].setBinding(0)
+                            .setLocation(2)
                             .setFormat(vk::Format::eR32G32B32Sfloat)
                             .setOffset(offsetof(Vertex, color));
     return attributeDescriptions;

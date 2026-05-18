@@ -3,6 +3,7 @@
 //
 
 #include "ImGuiHandler.hpp"
+#include "GridRenderer.hpp"      // For GPU grid toggle (getUseGPUGrid)
 #include "imgui/backends/imgui_impl_glfw.h"
 #include "imgui/backends/imgui_impl_vulkan.h"
 #include <stdexcept>
@@ -105,12 +106,82 @@ void ImGuiHandler::newFrame()
     ImGui::NewFrame();
 }
 
-void ImGuiHandler::renderUI()
+void ImGuiHandler::renderUI(GridRenderer* gridRenderer)
 {
-    ImGui::SetNextWindowSize(ImVec2(400.0f, 300.0f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Gravity Simulator Controls");
-    ImGui::Text("Hello, Vulkan!");
+    // === Left-side Simulation Status Panel (sleek scientific viz aesthetic) ===
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(310, 0), ImGuiCond_FirstUseEver);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.09f, 0.96f));           // Deep charcoal
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.15f, 0.18f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.08f, 0.10f, 0.13f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.10f, 0.13f, 0.17f, 1.0f));
+
+    if (ImGui::Begin("Simulation", nullptr,
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        // Header with accent
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.85f, 0.78f, 1.0f)); // Teal accent
+        ImGui::SeparatorText("GRAVITY SIM");
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+
+        // Quick status row
+        ImGui::Text("Geometry:");
+        ImGui::SameLine(110);
+        ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Flat"); // TODO: query from renderer
+
+        bool gpuEnabled = gridRenderer ? gridRenderer->getUseGPUGrid() : false;
+        ImGui::Text("Mode:");
+        ImGui::SameLine(110);
+        ImGui::TextColored(gpuEnabled ? ImVec4(0.0f, 0.9f, 0.7f, 1.0f) : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                           gpuEnabled ? "GPU Grid" : "CPU Fallback");
+
+        ImGui::Separator();
+
+        // Live metrics - clean two-column layout
+        float fps = ImGui::GetIO().Framerate;
+        ImGui::Text("FPS");
+        ImGui::SameLine(110);
+        ImGui::TextColored(fps > 55 ? ImVec4(0.4f, 1.0f, 0.6f, 1.0f) : ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                           "%.1f", fps);
+
+        ImGui::Text("Frame");
+        ImGui::SameLine(110);
+        ImGui::Text("%.2f ms", 1000.0f / fps);
+
+        ImGui::Text("Vertices");
+        ImGui::SameLine(110);
+        ImGui::Text("~250k"); // TODO: query real count
+
+        ImGui::Text("Bodies");
+        ImGui::SameLine(110);
+        ImGui::Text("%d", 10); // TODO: query real count
+
+        ImGui::Separator();
+
+        // GPU status (read-only display now that the toggle lives in the main Controls window)
+        if (gpuEnabled)
+        {
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.78f, 1.0f), "GPU Grid: ON");
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "GPU Grid: OFF (CPU fallback)");
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("xAI Gravity Simulator  •  2026");
+    }
     ImGui::End();
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
 
     ImGui::Render();
 }

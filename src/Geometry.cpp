@@ -7,6 +7,9 @@
 #include <iostream>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/fast_trigonometry.hpp>
+#include <sstream>
+#include <algorithm>
+#include <execution>
 
 Geometry::Geometry(int grid_size, float grid_scale, float warp_strength)
     : m_GridSize(grid_size)
@@ -107,6 +110,7 @@ void FlatGeometry::warpGrid(
     static float time = 0.0f;
     time += 0.016f; // Assuming ~60 FPS, adjust based on actual deltaTime
 
+#pragma omp parallel for
     for ( size_t v = 0; v < baseVertices.size(); ++v )
     {
         Vertex& vertex = baseVertices[v];
@@ -322,7 +326,7 @@ void SphericalGeometry::warpGrid(
 
     static bool log_first = true;
 
-    for ( Vertex& vertex : baseVertices )
+    auto processSphericalVertex = [&](Vertex& vertex)
     {
         float potential = 0.0f;
         for ( const auto& obj : massiveObjects )
@@ -340,21 +344,49 @@ void SphericalGeometry::warpGrid(
                 dist = 0.01f;
             const float dist_from_mass = glm::length(vertex.position - obj->m_Object.position);
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            const float damping = 1.0 / std::max(1.0f, sqrt(dist_from_mass)); ///std::pow(std::clamp(glm::dot(norm1, norm2), 0.0f, 1.0f), 4.0);
-            potential -= 3.0f * obj->getSize() * damping * dist / softenedDist; // Gravitational potential
+            const float damping = 1.0 / std::max(1.0f, sqrt(dist_from_mass));
+            potential -= 3.0f * obj->getSize() * damping * dist / softenedDist;
         }
 
         float displacement = potential * m_WarpStrength;
         displacement = std::min(displacement, maxDisplacement);
         displacement = std::max(displacement, -maxDisplacement);
 
-        // Displace along the radial direction
-        // vertex.position is already on the sphere of radius R, as generated
-        glm::vec3 radialDir = glm::normalize(vertex.position); // Matches vertex.normal from generation
-        // Reduce the radius by the displacement (inward dip)
+        glm::vec3 radialDir = glm::normalize(vertex.position);
         const float newRadius = std::max(R + 30.0f * displacement, 0.5f * R);
-        // newRadius = glm::max(newRadius, 0.1f * baseRadius); // Prevent collapsing to center
-        // vertex.normal = glm::normalize(vertex.position);
+        vertex.position = radialDir * newRadius;
+    };
+
+#pragma omp parallel for
+    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    {
+        Vertex& vertex = baseVertices[v];
+        float potential = 0.0f;
+        for ( const auto& obj : massiveObjects )
+        {
+            const float mass = obj->m_Object.mass;
+            if ( mass <= 0.0f )
+                continue;
+            const float r1 = glm::length(vertex.position);
+            const float r2 = glm::length(obj->m_Object.position);
+            if ( r1 < 0.01f || r2 < 0.01f )
+                continue;
+
+            float dist = computeDistance(vertex.position, obj->m_Object.position);
+            if ( dist < 0.01f )
+                dist = 0.01f;
+            const float dist_from_mass = glm::length(vertex.position - obj->m_Object.position);
+            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            const float damping = 1.0 / std::max(1.0f, sqrt(dist_from_mass));
+            potential -= 3.0f * obj->getSize() * damping * dist / softenedDist;
+        }
+
+        float displacement = potential * m_WarpStrength;
+        displacement = std::min(displacement, maxDisplacement);
+        displacement = std::max(displacement, -maxDisplacement);
+
+        glm::vec3 radialDir = glm::normalize(vertex.position);
+        const float newRadius = std::max(R + 30.0f * displacement, 0.5f * R);
         vertex.position = radialDir * newRadius;
     }
 
@@ -491,9 +523,8 @@ void HyperbolicGeometry::warpGrid(
 
     // softeningLength = std::max(softeningLength, 10.0f);
 
-    for ( Vertex& vertex : baseVertices )
+    auto processHyperbolicVertex = [&](Vertex& vertex)
     {
-        // Compute damping factor based on distance from center
         const float rSquared = vertex.position.x * vertex.position.x + vertex.position.z * vertex.position.z;
         float damping = 1.0f - rSquared / (R * R);
         if ( damping < 0.0f )
@@ -513,11 +544,10 @@ void HyperbolicGeometry::warpGrid(
                 (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k,
                 pos2.z - pos1.z);
             const float dist = glm::length(diff);
-            // const float dist = computeDistance(vertex.position, obj->m_Object.position);
             if ( dist >= std::numeric_limits<float>::max() )
-                continue; // Skip if distance computation failed
+                continue;
             const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= mass / softenedDist; // Gravitational potential
+            potential -= mass / softenedDist;
         }
 
         float displacement = -potential * m_WarpStrength * glm::clamp(
@@ -525,22 +555,61 @@ void HyperbolicGeometry::warpGrid(
         displacement = std::min(displacement, maxDisplacement);
         displacement = std::max(displacement, -maxDisplacement);
 
-        // Compute the true normal to the hyperbolic surface
         const float x = vertex.position.x;
         const float z = vertex.position.z;
         glm::vec3 trueNormal(-2.0f * x / k, 1.0f, 2.0f * z / k);
         trueNormal = glm::normalize(trueNormal);
 
-        // Compute a visual normal by blending with the y-direction
-        float w = 1.0f; // Blend factor (0 = pure y-direction, 1 = true normal)
+        float w = 1.0f;
         glm::vec3 visualNormal = glm::normalize(w * trueNormal + (1.0f - w) * glm::vec3(0.0f, 1.0f, 0.0f));
 
-        // Displace along the visual normal
         vertex.position -= displacement * visualNormal;
+    };
 
-        // // Project back to the hyperbolic surface
-        // vertex.position.y = (vertex.position.x * vertex.position.x - vertex.position.z * vertex.position.z) / k;
+#pragma omp parallel for
+    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    {
+        Vertex& vertex = baseVertices[v];
 
+        const float rSquared = vertex.position.x * vertex.position.x + vertex.position.z * vertex.position.z;
+        float damping = 1.0f - rSquared / (R * R);
+        if ( damping < 0.0f )
+            damping = 0.0f;
+
+        float potential = 0.0f;
+        for ( const auto& obj : massiveObjects )
+        {
+            const float mass = obj->m_Object.mass;
+            if ( mass <= 0.0f )
+                continue;
+
+            glm::vec3 pos1 = vertex.position;
+            glm::vec3 pos2 = obj->m_Object.position;
+            glm::vec3 diff(
+                pos2.x - pos1.x,
+                (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k,
+                pos2.z - pos1.z);
+            const float dist = glm::length(diff);
+            if ( dist >= std::numeric_limits<float>::max() )
+                continue;
+            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
+            potential -= mass / softenedDist;
+        }
+
+        float displacement = -potential * m_WarpStrength * glm::clamp(
+            1.0f + std::log(std::abs(glm::length(vertex.position))), 1.0f, 5.0f);
+        displacement = std::min(displacement, maxDisplacement);
+        displacement = std::max(displacement, -maxDisplacement);
+
+        const float x = vertex.position.x;
+        const float z = vertex.position.z;
+        glm::vec3 trueNormal(-2.0f * x / k, 1.0f, 2.0f * z / k);
+        trueNormal = glm::normalize(trueNormal);
+
+        float w = 1.0f;
+        glm::vec3 visualNormal = glm::normalize(w * trueNormal + (1.0f - w) * glm::vec3(0.0f, 1.0f, 0.0f));
+
+        vertex.position -= displacement * visualNormal;
     }
 
     for ( size_t i = 0; i < baseVertices.size(); ++i )

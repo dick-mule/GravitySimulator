@@ -8,17 +8,22 @@
 #include <glm/gtc/matrix_transform.hpp> //translate, rotate, scale, perspective
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/norm.hpp> // Include the extension header
+#include <glm/gtx/string_cast.hpp>
 #include <vulkan/vulkan.hpp>
 #include <string>
+#include <atomic>
 
 struct Vertex
 {
     glm::vec3 position;
-    glm::vec3 color;
+    float padding1;   // 16-byte alignment for GPU
     glm::vec3 normal;
+    float padding2;
+    glm::vec3 color;
+    float padding3;
 
     static vk::VertexInputBindingDescription getBindingDescription();
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions();
+    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions();
 };
 
 struct Object
@@ -77,10 +82,10 @@ protected:
 public:
     explicit Shape(const Object& object);
     virtual ~Shape();
-    virtual std::string getName() const = 0;
+    [[nodiscard]] virtual std::string getName() const = 0;
     virtual void addVertices(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) = 0;
+    [[nodiscard]] float getSize() const { return m_Size; }
     void setSize(float size) { m_Size = size; }
-    float getSize() const { return m_Size; }
 };
 
 class Cube final : public Shape

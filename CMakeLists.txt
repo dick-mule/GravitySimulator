@@ -11,6 +11,18 @@ find_package(Vulkan REQUIRED)
 # Find GLFW
 find_package(glfw3 3.3 REQUIRED)
 
+# ===================== OpenMP (for CPU threading) =====================
+if(APPLE)
+    # Homebrew libomp paths (works for both Intel and Apple Silicon)
+    set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
+    set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
+    set(OpenMP_C_LIB_NAMES "omp")
+    set(OpenMP_CXX_LIB_NAMES "omp")
+    set(OpenMP_omp_LIBRARY "/opt/homebrew/opt/libomp/lib/libomp.dylib")
+endif()
+
+find_package(OpenMP REQUIRED)
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/src)
 include_directories(${CMAKE_SOURCE_DIR}/src/imgui)
@@ -20,6 +32,9 @@ set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
 set(SHADER_FILES
         ${SHADER_DIR}/grid.frag
         ${SHADER_DIR}/grid.vert
+        ${SHADER_DIR}/flat_grid.comp
+        ${SHADER_DIR}/spherical_grid.comp
+        ${SHADER_DIR}/hyperbolic_grid.comp
 )
 
 foreach(SHADER ${SHADER_FILES})
@@ -61,5 +76,10 @@ set(SOURCES
 # Create executable
 add_executable(GravitySimulator ${SOURCES})
 add_dependencies(GravitySimulator Shaders)
+
 # Link libraries
 target_link_libraries(GravitySimulator glfw Vulkan::Vulkan)
+
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(GravitySimulator OpenMP::OpenMP_CXX)
+endif()
