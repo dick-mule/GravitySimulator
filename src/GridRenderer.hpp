@@ -45,6 +45,8 @@ public:
     void setUseGPUGrid(bool enabled);
     bool getUseGPUGrid() const { return m_UseGPUGrid; }
 
+    void setVisualTuning(const VisualTuning& tuning) { m_Visual = tuning; }
+
     void updateBodiesBuffer();   // populates the bodies SSBO for the compute shader
 
     // Ensures the compute descriptor set has valid bindings for both the vertex buffer (0)
@@ -66,12 +68,14 @@ private:
 
     // Grid-warp (gravitational-well visualisation) dials — UI-tunable.
     WarpParams m_Warp;
+    VisualTuning m_Visual;          // new tuning struct for purely visual parameters
     float m_RecenterOffset = 0.0f;  // mean warp depth, recomputed each frame
 
     // Rolling history for the conserved-quantity plots in the controls panel.
     static constexpr int kHistorySize = 180;
     std::array<float, kHistorySize> m_EnergyHistory{};
     std::array<float, kHistorySize> m_AngMomHistory{};
+    std::array<float, kHistorySize> m_MembraneEnergyHistory{};   // new
     int m_HistoryHead = 0;
 
     // The CPU N-body simulation — owned by VulkanApp and referenced here, so

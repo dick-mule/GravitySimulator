@@ -72,6 +72,12 @@ layout(push_constant) uniform PushConstants {
     float membraneStiffness; // spring pull toward the well shape
     float membraneWaveSpeed; // ripple propagation (CFL-stable below 0.5)
     float membraneDamping;   // bleeds energy so ripples settle
+
+    // Visual tuning (new) — allows tweaking appearance from the UI without recompiling
+    float edgeFadeStart;
+    float edgeFadeEnd;
+    float gridFrequency;
+    float gridIntensity;
 } pc;
 
 void warpFlat(vec3 basePos, uint idx, uint i, uint j);
@@ -156,7 +162,7 @@ void main()
 float edgeFade(vec3 basePos)
 {
     float t = max(abs(basePos.x), abs(basePos.z)) / (pc.uScale * 0.5);
-    return 1.0 - smoothstep(0.85, 1.0, t);
+    return 1.0 - smoothstep(pc.edgeFadeStart, pc.edgeFadeEnd, t);
 }
 
 // Heat-map colour: a multi-stop white -> sky -> blue -> navy ramp. The depth is
@@ -204,12 +210,10 @@ float membraneStep(uint idx, uint i, uint j, uint vertsPerRow, float target)
     float hU = mRead[i  * vertsPerRow + jU].height;
     float lap = hL + hR + hD + hU - 4.0 * h;
 
-    // Symplectic Euler in per-step units (no separate dt).
-    float accel = pc.membraneStiffness * (target - h)
-                + pc.membraneWaveSpeed * lap
-                - pc.membraneDamping   * v;
-    v += accel;
-    h += v;
+    // Improved semi-implicit / damped update (more stable than basic symplectic Euler).
+    float accel = pc.membraneStiffness * (target - h) + pc.membraneWaveSpeed * lap;
+    v = (v + accel) * (1.0 - pc.membraneDamping);
+    h = h + v;
 
     mWrite[idx].height   = h;
     mWrite[idx].velocity = v;

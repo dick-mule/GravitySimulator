@@ -50,6 +50,17 @@ struct WarpParams
     float membraneDamping   = 0.06f; // bleeds energy so ripples settle
 };
 
+// Purely visual / debug tuning knobs that don't affect physics.
+// These are passed through to the shader so you can tweak appearance
+// without recompiling. Grouped here so they can be exposed in the UI.
+struct VisualTuning
+{
+    float edgeFadeStart   = 0.85f;   // where the edge taper begins (0.0 = center, 1.0 = outer edge)
+    float edgeFadeEnd     = 1.0f;
+    float gridFrequency   = 18.0f;   // how many grid lines across the screen
+    float gridIntensity   = 0.04f;   // strength of the background grid
+};
+
 class Geometry
 {
 protected:

@@ -521,6 +521,12 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
         float   membraneStiffness;
         float   membraneWaveSpeed;
         float   membraneDamping;
+
+        // Visual tuning (new)
+        float   edgeFadeStart;
+        float   edgeFadeEnd;
+        float   gridFrequency;
+        float   gridIntensity;
     };
 
     PushConstants pc{};
@@ -536,6 +542,12 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
     pc.membraneStiffness = m_Warp.membraneStiffness;
     pc.membraneWaveSpeed = m_Warp.membraneWaveSpeed;
     pc.membraneDamping   = m_Warp.membraneDamping;
+
+    // Visual tuning (passed to shader so the artist can tweak without recompiling)
+    pc.edgeFadeStart  = m_Visual.edgeFadeStart;
+    pc.edgeFadeEnd    = m_Visual.edgeFadeEnd;
+    pc.gridFrequency  = m_Visual.gridFrequency;
+    pc.gridIntensity  = m_Visual.gridIntensity;
 
     // Map our enum to the shader's expected values
     switch (m_CurrentGeometryType)
@@ -553,7 +565,32 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
     // vertices per row, so cover gridSize+1; the shader bounds-checks the rest.
     uint32_t groupsX = (m_GridSize + 1 + 31) / 32;
     uint32_t groupsY = (m_GridSize + 1 + 31) / 32;
+
+    // Safety check: the dispatch must be large enough to cover every vertex.
+    // If this triggers, the grid size was changed without updating the dispatch math.
+    uint32_t vertsPerRow = static_cast<uint32_t>(m_GridSize) + 1;
+    uint32_t totalVerts  = vertsPerRow * vertsPerRow;
+    uint32_t dispatched  = groupsX * 32 * groupsY * 32;
+    if (dispatched < totalVerts)
+    {
+        // This is a programming error. In a shipping build you might want to log instead.
+        assert(false && "Compute dispatch too small for current grid size");
+    }
+
     commandBuffer.dispatch(groupsX, groupsY, 1);
+
+    // === Synchronization notes ===
+    // After the compute shader finishes:
+    //   - The vertex buffer (binding 0) must be visible as vertex input for the upcoming draw.
+    //   - The membrane write buffer must be visible as read-only for the *next* frame's compute dispatch.
+    //
+    // Because we only have a single in-flight frame and we wait on the graphics fence
+    // before recording the next frame's command buffer, the pipelineBarrier below is sufficient.
+    // The barrier ensures ShaderWrite → VertexAttributeRead (for drawing) and
+    // ShaderWrite → ShaderRead (for next frame's membrane read).
+    //
+    // If you ever go to multiple frames in flight, you will need proper timeline semaphores
+    // or an extra fence between compute and the next compute read.
 
     // Barrier: the compute writes must be visible to (a) vertex input, for the
     // draw of the warped grid, and (b) next frame's compute, which reads the
@@ -1162,6 +1199,13 @@ void GridRenderer::renderCameraControls()
         ImGui::DragFloat("Membrane Damping", &m_Warp.membraneDamping, 0.005f, 0.0f, 0.3f, "%.3f");
     }
 
+    // Visual tuning (new) - purely aesthetic, no physics effect
+    ImGui::SeparatorText("Visual Tuning");
+    ImGui::DragFloat("Edge Fade Start", &m_Visual.edgeFadeStart, 0.01f, 0.5f, 0.95f, "%.2f");
+    ImGui::DragFloat("Edge Fade End",   &m_Visual.edgeFadeEnd,   0.01f, 0.95f, 1.0f,  "%.2f");
+    ImGui::DragFloat("Grid Frequency",  &m_Visual.gridFrequency, 0.5f,  5.0f,  60.0f,  "%.1f");
+    ImGui::DragFloat("Grid Intensity",  &m_Visual.gridIntensity, 0.005f, 0.0f,  0.3f,   "%.3f");
+
     // Null-geodesic (light-ray) demo. Emit a fan of rays, then toggle Lensing:
     // off = pure manifold geodesics (curvature deviation), on = light bending.
     ImGui::Separator();
@@ -1207,6 +1251,18 @@ void GridRenderer::renderCameraControls()
     std::snprintf(angLabel, sizeof(angLabel), "%.0f", m_Simulation.angularMomentum());
     ImGui::PlotLines("Ang. Momentum", m_AngMomHistory.data(), kHistorySize, m_HistoryHead,
                      angLabel, FLT_MAX, FLT_MAX, ImVec2(0.0f, 48.0f));
+
+    // Membrane "activity" proxy: mean |warp depth| across bodies (cheap to compute on CPU).
+    // A proper value would come from a GPU reduction of the membrane buffer.
+    float membraneActivity = 0.0f;
+    for (const auto& body : m_Simulation.bodies())
+    {
+        // Rough estimate of well depth contributed by this body
+        membraneActivity += std::abs(m_Warp.wellDepth * std::tanh(m_Warp.warpGain * body->m_Object.mass * 0.1f));
+    }
+    m_MembraneEnergyHistory[m_HistoryHead] = membraneActivity / std::max(1.0f, (float)m_Simulation.bodies().size());
+    ImGui::PlotLines("Membrane Energy (proxy)", m_MembraneEnergyHistory.data(), kHistorySize, m_HistoryHead,
+                     nullptr, FLT_MAX, FLT_MAX, ImVec2(0.0f, 48.0f));
 
     if ( ImGui::Button("Reset Camera") )
         m_CameraController.reset(m_CurrentGeometryType == GeometryType::Spherical, m_GridScale);

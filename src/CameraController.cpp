@@ -12,6 +12,28 @@ void CameraController::update()
 {
     const ImGuiIO& io = ImGui::GetIO();
 
+    // Guard: if ImGui wants the mouse (user is interacting with a window or slider),
+    // do not process camera mouse input. This prevents the camera from moving
+    // when dragging sliders or using the control panel.
+    if ( io.WantCaptureMouse )
+    {
+        // Still allow keyboard if ImGui doesn't want it
+        if ( !io.WantCaptureKeyboard )
+        {
+            const glm::vec3 forward = glm::normalize(m_Camera.target - m_Camera.getPosition());
+            const glm::vec3 right   = glm::normalize(glm::cross(forward, m_Camera.up));
+            const glm::vec3 up      = glm::normalize(glm::cross(right, forward));
+
+            if ( ImGui::IsKeyDown(ImGuiKey_W) ) m_Camera.target -= forward * m_Camera.panSpeed;
+            if ( ImGui::IsKeyDown(ImGuiKey_S) ) m_Camera.target += forward * m_Camera.panSpeed;
+            if ( ImGui::IsKeyDown(ImGuiKey_A) ) m_Camera.target -= right   * m_Camera.panSpeed;
+            if ( ImGui::IsKeyDown(ImGuiKey_D) ) m_Camera.target += right   * m_Camera.panSpeed;
+            if ( ImGui::IsKeyDown(ImGuiKey_E) ) m_Camera.target += up      * m_Camera.panSpeed;
+            if ( ImGui::IsKeyDown(ImGuiKey_Q) ) m_Camera.target -= up      * m_Camera.panSpeed;
+        }
+        return;
+    }
+
     // Zoom with trackpad / wheel scroll.
     if ( io.MouseWheel != 0.0f )
     {
