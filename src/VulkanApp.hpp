@@ -10,6 +10,8 @@
 #include <vector>
 #include <set>
 
+#include "Simulation.hpp"
+
 class ImGuiHandler;
 class GridRenderer;
 
@@ -48,6 +50,10 @@ private:
 
     const int m_WIDTH = 2000;
     const int m_HEIGHT = 1500;
+
+    // The N-body simulation is owned here, not by GridRenderer, so it
+    // survives swapchain recreation (window resize) with its state intact.
+    Simulation m_Simulation;
 
     std::shared_ptr<ImGuiHandler> m_ImGuiHandler;
     std::shared_ptr<GridRenderer> m_GridRenderer;

@@ -4,18 +4,106 @@
 
 #include "Geometry.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/fast_trigonometry.hpp>
-#include <sstream>
 #include <algorithm>
-#include <execution>
 
-Geometry::Geometry(int grid_size, float grid_scale, float warp_strength)
+namespace
+{
+    // Mass enters the warp as mass^kMassExponent — a compression gentle enough
+    // to keep the central body clearly dominant over orbiter clusters, yet firm
+    // enough to tame the ~600x central-vs-orbiter mass range. Must match the
+    // exponent hard-coded in flat_grid.comp.
+    constexpr float kMassExponent = 0.4f;
+
+    // Heat-map colour for the warp: white where the grid is flat, fading to a
+    // dark blue at full well depth. Must match the gradient in flat_grid.comp.
+    glm::vec3 depthColor(float depth, float wellDepth)
+    {
+        const float t = glm::clamp(depth / std::max(wellDepth, 1e-3f), 0.0f, 1.0f);
+        return glm::mix(glm::vec3(1.0f), glm::vec3(0.15f, 0.30f, 0.65f), t);
+    }
+}
+
+Geometry::Geometry(int grid_size, float grid_scale)
     : m_GridSize(grid_size)
     , m_GridScale(grid_scale)
-    , m_WarpStrength(warp_strength)
 {
+}
+
+// Lazily (re)builds the un-warped base surface. warpGrid() warps a copy of
+// this rather than regenerating the whole grid every frame.
+const std::vector<Vertex>& Geometry::baseGrid()
+{
+    if ( m_BaseGridDirty )
+    {
+        m_BaseGrid.clear();
+        std::vector<uint32_t> dummyIndices;
+        generateGrid(m_BaseGrid, dummyIndices, m_GridSize, m_GridScale);
+        m_BaseGridDirty = false;
+    }
+    return m_BaseGrid;
+}
+
+// Total warp depth at a base position: the sum of every body's smooth,
+// saturating well. Euclidean distance — HyperbolicGeometry overrides this to
+// measure along the paraboloid surface instead.
+float Geometry::warpDepth(
+    const glm::vec3& basePos,
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp) const
+{
+    // Sum every body's contribution. mass^kMassExponent compresses the huge
+    // central-vs-orbiter range; radialInfluence widens heavier bodies' wells.
+    float sum = 0.0f;
+    for ( const auto& shape : bodies )
+    {
+        const float mass = shape->m_Object.mass;
+        if ( mass <= 0.0f )
+            continue;
+        const float m04   = std::pow(mass, kMassExponent);
+        const float width = 1.0f + warp.radialInfluence * m04;
+        const float rEff  = glm::length(basePos - shape->m_Object.position) / width;
+        const float soft  = std::sqrt(rEff * rEff + warp.softening * warp.softening);
+        sum += m04 / soft;
+    }
+    // One tanh of the *summed* field: bounded by wellDepth, so a cluster of
+    // bodies cannot stack past a single well's depth.
+    return warp.wellDepth * std::tanh(warp.warpGain * sum) * edgeFade(basePos);
+}
+
+float Geometry::edgeFade(const glm::vec3& basePos) const
+{
+    // Smoothstep falloff over the outer 15% of the grid, so the boundary is
+    // always flat no matter where the bodies have drifted.
+    const float half = m_GridScale * 0.5f;
+    const float t = std::max(std::abs(basePos.x), std::abs(basePos.z)) / half;
+    const float f = glm::clamp((t - 0.85f) / 0.15f, 0.0f, 1.0f);
+    return 1.0f - f * f * (3.0f - 2.0f * f);
+}
+
+// Mean warp depth over a coarse sample of the base grid. The warp field is
+// smooth, so a strided sample is an accurate, cheap estimate of the mean —
+// used as the re-centering offset on Spherical / Hyperbolic.
+float Geometry::computeRecenterOffset(
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp)
+{
+    const std::vector<Vertex>& base = baseGrid();
+    if ( base.empty() )
+        return 0.0f;
+
+    const size_t stride = std::max<size_t>(1, base.size() / 4096);
+    double sum = 0.0;
+    size_t count = 0;
+    for ( size_t v = 0; v < base.size(); v += stride )
+    {
+        sum += warpDepth(base[v].position, bodies, warp);
+        ++count;
+    }
+    return count ? static_cast<float>(sum / static_cast<double>(count)) : 0.0f;
 }
 
 void FlatGeometry::generateGrid(
@@ -63,89 +151,29 @@ void FlatGeometry::updatePosition(Object& obj, float deltaTime, float /*radius n
     const glm::vec3 halfV = (obj.velocity + accelTerm) * deltaTime;
     obj.velocity += accelTerm; // v(t + 0.5 * dt)
     if ( apply_verlet_half )
-    {
         obj.position += halfV; // x(t + dt) = x(t) + halfV
-        obj.modelMatrix = glm::translate(glm::mat4(1.0), obj.position);
-    }
-}
-
-static std::string vecToString(const glm::vec3& vec)
-{
-    std::stringstream ss;
-    ss << vec.x << " " << vec.y << " " << vec.z;
-    return ss.str();
 }
 
 void FlatGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
-    float G,
-    float maxDisplacement,
-    float minDistSquared,
-    float softeningLength)
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp,
+    float recenterOffset)
 {
-    // // Reset vertices to base positions
-    std::vector<Vertex> baseVertices(0);
-    std::vector<uint32_t> dummyIndices(0);
-    generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale); // Match m_GridSize and m_GridScale
-
-    // Compute the center of mass and relative velocity for ripple effect
-    glm::vec3 centerOfMass(0.0f);
-    float totalMass = 0.0f;
-    float maxMass = 0.0;
-    for ( auto& shape : massiveObjects )
-    {
-        float mass = shape->m_Object.mass;
-        if ( mass <= 0.0f )
-            continue;
-        if ( mass > maxMass )
-            maxMass = mass;
-        centerOfMass += mass * glm::vec3(shape->m_Object.modelMatrix[3]);
-        totalMass += mass;
-    }
-    if ( totalMass > 0.0f )
-        centerOfMass /= totalMass;
-
-    // Current time for ripple animation
-    static float time = 0.0f;
-    time += 0.016f; // Assuming ~60 FPS, adjust based on actual deltaTime
+    const std::vector<Vertex>& base = baseGrid();
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    for ( size_t v = 0; v < base.size(); ++v )
     {
-        Vertex& vertex = baseVertices[v];
-        // Compute gravitational potential at the vertex
-        float potential = 0.0f;
-        for ( size_t i = 0; i < massiveObjects.size(); ++i )
-        {
-            auto& obj = massiveObjects[i];
-            const float mass = obj->m_Object.mass;
-            if ( mass <= 0.0f )
-                continue;
-            const float dist = computeDistance(vertex.position, obj->m_Object.position);
-            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            // Logarithmic scaling
-            potential -= mass / softenedDist; // Gravitational potential
-        }
+        Vertex vertex = base[v];
+        const float rawDepth = warpDepth(vertex.position, bodies, warp);
 
-        // Base displacement from potential
-        float displacement = -potential * m_WarpStrength; // Negative potential -> downward displacement
-        // displacement = maxDisplacement * (1.0f / (1 + exp(-displacement / maxDisplacement)) - 0.5);
+        vertex.position.y -= rawDepth - recenterOffset;   // wells dip downward
+        vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        vertex.color = depthColor(rawDepth, warp.wellDepth);
 
-        // Cap the displacement
-        displacement = std::min(displacement, maxDisplacement);
-        displacement = std::max(displacement, -maxDisplacement);
-
-        // Apply displacement along the z-axis
-        vertex.position.y -= displacement;  // Positive potential -> upward, negative -> downward
-
-        // Update normal after warping (approximate normal for flat geometry)
-        vertex.normal = glm::vec3(0.0f, 0.0f, 1.0f); // Simplified for flat geometry
+        vertices[v] = vertex;
     }
-
-    for ( size_t i = 0; i < baseVertices.size(); ++i )
-        vertices[i] = baseVertices[i];
-
 }
 
 void SphericalGeometry::generateGrid(
@@ -255,7 +283,6 @@ void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radiu
     {
         obj.position = pole; // Reset to sphere surface
         obj.velocity = glm::vec3(0.0f);
-        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
         return;
     }
     glm::vec3 normal = fromPole / r; // Unit normal (radial direction)
@@ -278,10 +305,15 @@ void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radiu
         // Update position using half-step velocity
         // glm::vec3 newPos = pos + halfV * deltaTime;
 
-        // Enforce spherical constraint: Project onto sphere
+        // Enforce spherical constraint: project back onto the sphere. Guard
+        // the normalize — if a body's step lands it exactly at the centre,
+        // normalize() would yield NaN and the body would vanish.
         obj.position += halfV;
-        obj.position = glm::normalize(obj.position) * radius;
-        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
+        const float len = glm::length(obj.position);
+        if ( len > 1e-4f )
+            obj.position = obj.position / len * radius;
+        else
+            obj.position = pole;   // degenerate: snap to a pole instead of NaN
 
         // Recompute normal and ensure velocity remains tangential
         // normal = glm::normalize(newPos - pole);
@@ -292,108 +324,31 @@ void SphericalGeometry::updatePosition(Object& obj, float deltaTime, float radiu
 
 void SphericalGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
-    float G,
-    float maxDisplacement,
-    float minDistSquared,
-    float softeningLength)
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp,
+    float recenterOffset)
 {
-    std::vector<Vertex> baseVertices;
-    std::vector<uint32_t> dummyIndices;
-    generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
-
-    float maxMass = 0.0;
-    float totalMass = 0.0f;
-    glm::vec3 centerOfMass(0.0f);
-    for ( auto& shape : massiveObjects )
-    {
-        const float mass = shape->m_Object.mass;
-        if ( mass <= 0.0f )
-            continue;
-        if ( mass > maxMass )
-            maxMass = mass;
-        centerOfMass += mass * shape->m_Object.position;
-        totalMass += mass;
-    }
-    if ( totalMass > 0.0f )
-        centerOfMass /= totalMass;
-
-    static float time = 0.0f;
-    time += 0.016f;
-    // softeningLength = softeningLength;
-    // Use the base radius of the sphere for scaling
-    const float R = m_GridScale / 2.0f; // e.g., 125
-
-    static bool log_first = true;
-
-    auto processSphericalVertex = [&](Vertex& vertex)
-    {
-        float potential = 0.0f;
-        for ( const auto& obj : massiveObjects )
-        {
-            const float mass = obj->m_Object.mass;
-            if ( mass <= 0.0f )
-                continue;
-            const float r1 = glm::length(vertex.position);
-            const float r2 = glm::length(obj->m_Object.position);
-            if ( r1 < 0.01f || r2 < 0.01f )
-                continue;
-
-            float dist = computeDistance(vertex.position, obj->m_Object.position);
-            if ( dist < 0.01f )
-                dist = 0.01f;
-            const float dist_from_mass = glm::length(vertex.position - obj->m_Object.position);
-            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            const float damping = 1.0 / std::max(1.0f, sqrt(dist_from_mass));
-            potential -= 3.0f * obj->getSize() * damping * dist / softenedDist;
-        }
-
-        float displacement = potential * m_WarpStrength;
-        displacement = std::min(displacement, maxDisplacement);
-        displacement = std::max(displacement, -maxDisplacement);
-
-        glm::vec3 radialDir = glm::normalize(vertex.position);
-        const float newRadius = std::max(R + 30.0f * displacement, 0.5f * R);
-        vertex.position = radialDir * newRadius;
-    };
+    const std::vector<Vertex>& base = baseGrid();
+    const float R = m_GridScale / 2.0f; // base sphere radius
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    for ( size_t v = 0; v < base.size(); ++v )
     {
-        Vertex& vertex = baseVertices[v];
-        float potential = 0.0f;
-        for ( const auto& obj : massiveObjects )
-        {
-            const float mass = obj->m_Object.mass;
-            if ( mass <= 0.0f )
-                continue;
-            const float r1 = glm::length(vertex.position);
-            const float r2 = glm::length(obj->m_Object.position);
-            if ( r1 < 0.01f || r2 < 0.01f )
-                continue;
+        Vertex vertex = base[v];
 
-            float dist = computeDistance(vertex.position, obj->m_Object.position);
-            if ( dist < 0.01f )
-                dist = 0.01f;
-            const float dist_from_mass = glm::length(vertex.position - obj->m_Object.position);
-            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            const float damping = 1.0 / std::max(1.0f, sqrt(dist_from_mass));
-            potential -= 3.0f * obj->getSize() * damping * dist / softenedDist;
-        }
+        // Wells dimple the sphere inward. The re-centering offset removes the
+        // (near-uniform) contribution of the central mass — which sits at the
+        // sphere's centre — so the manifold keeps its average radius R.
+        const float rawDepth = warpDepth(vertex.position, bodies, warp);
 
-        float displacement = potential * m_WarpStrength;
-        displacement = std::min(displacement, maxDisplacement);
-        displacement = std::max(displacement, -maxDisplacement);
-
-        glm::vec3 radialDir = glm::normalize(vertex.position);
-        const float newRadius = std::max(R + 30.0f * displacement, 0.5f * R);
+        const glm::vec3 radialDir = glm::normalize(vertex.position);
+        const float newRadius = std::max(R - (rawDepth - recenterOffset), 0.3f * R);
         vertex.position = radialDir * newRadius;
+        vertex.normal = radialDir;
+        vertex.color = depthColor(rawDepth, warp.wellDepth);
+
+        vertices[v] = vertex;
     }
-
-    log_first = false;
-
-    for ( size_t i = 0; i < baseVertices.size(); ++i )
-        vertices[i] = baseVertices[i];
 }
 
 void HyperbolicGeometry::generateGrid(
@@ -484,136 +439,62 @@ void HyperbolicGeometry::updatePosition(Object& obj, float deltaTime, float /*ra
         // Update vy to match surface
         obj.velocity.y = (2.0f / k) * (obj.position.x * obj.velocity.x - obj.position.z * obj.velocity.z);
 
-        obj.modelMatrix = glm::translate(glm::mat4(1.0f), obj.position);
     }
+}
+
+// Hyperbolic measures the warp distance along the paraboloid surface rather
+// than the straight-line Euclidean distance the base implementation uses.
+float HyperbolicGeometry::warpDepth(
+    const glm::vec3& basePos,
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp) const
+{
+    const float k = m_GridScale; // paraboloid scale: y = (x^2 - z^2) / k
+    float sum = 0.0f;
+    for ( const auto& shape : bodies )
+    {
+        const float mass = shape->m_Object.mass;
+        if ( mass <= 0.0f )
+            continue;
+        const glm::vec3 b = shape->m_Object.position;
+        const glm::vec3 diff(
+            b.x - basePos.x,
+            (b.x * b.x - b.z * b.z) / k - (basePos.x * basePos.x - basePos.z * basePos.z) / k,
+            b.z - basePos.z);
+        const float m04   = std::pow(mass, kMassExponent);
+        const float width = 1.0f + warp.radialInfluence * m04;
+        const float rEff  = glm::length(diff) / width;
+        const float soft  = std::sqrt(rEff * rEff + warp.softening * warp.softening);
+        sum += m04 / soft;
+    }
+    return warp.wellDepth * std::tanh(warp.warpGain * sum) * edgeFade(basePos);
 }
 
 void HyperbolicGeometry::warpGrid(
     std::vector<Vertex>& vertices,
-    const std::vector<std::shared_ptr<Shape>>& massiveObjects,
-    float G,
-    float maxDisplacement,
-    float minDistSquared,
-    float softeningLength)
+    const std::vector<std::shared_ptr<Shape>>& bodies,
+    const WarpParams& warp,
+    float recenterOffset)
 {
-    std::vector<Vertex> baseVertices;
-    std::vector<uint32_t> dummyIndices;
-    generateGrid(baseVertices, dummyIndices, m_GridSize, m_GridScale);
-
-    glm::vec3 centerOfMass(0.0f);
-    float totalMass = 0.0f;
-    const float R = m_GridScale / 2.0f; // Radius of the Poincaré disk (50.0f)
-    const float k = m_GridScale; // Scale factor for z = (x^2 - y^2) / k (100.0f) <- Non graphics formula
-    float maxMass = 0.0;
-    for ( auto& shape : massiveObjects )
-    {
-        float mass = shape->m_Object.mass;
-        if ( mass <= 0.0f )
-            continue;
-        if ( mass > maxMass )
-            maxMass = mass;
-        centerOfMass += mass * shape->m_Object.position;
-        totalMass += mass;
-    }
-    if ( totalMass > 0.0f )
-        centerOfMass /= totalMass;
-
-    static float time = 0.0f;
-    time += 0.016f;
-
-    // softeningLength = std::max(softeningLength, 10.0f);
-
-    auto processHyperbolicVertex = [&](Vertex& vertex)
-    {
-        const float rSquared = vertex.position.x * vertex.position.x + vertex.position.z * vertex.position.z;
-        float damping = 1.0f - rSquared / (R * R);
-        if ( damping < 0.0f )
-            damping = 0.0f;
-
-        float potential = 0.0f;
-        for ( const auto& obj : massiveObjects )
-        {
-            const float mass = obj->m_Object.mass;
-            if ( mass <= 0.0f )
-                continue;
-
-            glm::vec3 pos1 = vertex.position;
-            glm::vec3 pos2 = obj->m_Object.position;
-            glm::vec3 diff(
-                pos2.x - pos1.x,
-                (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k,
-                pos2.z - pos1.z);
-            const float dist = glm::length(diff);
-            if ( dist >= std::numeric_limits<float>::max() )
-                continue;
-            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= mass / softenedDist;
-        }
-
-        float displacement = -potential * m_WarpStrength * glm::clamp(
-            1.0f + std::log(std::abs(glm::length(vertex.position))), 1.0f, 5.0f);
-        displacement = std::min(displacement, maxDisplacement);
-        displacement = std::max(displacement, -maxDisplacement);
-
-        const float x = vertex.position.x;
-        const float z = vertex.position.z;
-        glm::vec3 trueNormal(-2.0f * x / k, 1.0f, 2.0f * z / k);
-        trueNormal = glm::normalize(trueNormal);
-
-        float w = 1.0f;
-        glm::vec3 visualNormal = glm::normalize(w * trueNormal + (1.0f - w) * glm::vec3(0.0f, 1.0f, 0.0f));
-
-        vertex.position -= displacement * visualNormal;
-    };
+    const std::vector<Vertex>& base = baseGrid();
+    const float k = m_GridScale; // paraboloid scale: y = (x^2 - z^2) / k
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < baseVertices.size(); ++v )
+    for ( size_t v = 0; v < base.size(); ++v )
     {
-        Vertex& vertex = baseVertices[v];
+        Vertex vertex = base[v];
+        const float rawDepth = warpDepth(vertex.position, bodies, warp);
 
-        const float rSquared = vertex.position.x * vertex.position.x + vertex.position.z * vertex.position.z;
-        float damping = 1.0f - rSquared / (R * R);
-        if ( damping < 0.0f )
-            damping = 0.0f;
-
-        float potential = 0.0f;
-        for ( const auto& obj : massiveObjects )
-        {
-            const float mass = obj->m_Object.mass;
-            if ( mass <= 0.0f )
-                continue;
-
-            glm::vec3 pos1 = vertex.position;
-            glm::vec3 pos2 = obj->m_Object.position;
-            glm::vec3 diff(
-                pos2.x - pos1.x,
-                (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k,
-                pos2.z - pos1.z);
-            const float dist = glm::length(diff);
-            if ( dist >= std::numeric_limits<float>::max() )
-                continue;
-            const float softenedDist = sqrt(dist * dist + softeningLength * softeningLength);
-            potential -= mass / softenedDist;
-        }
-
-        float displacement = -potential * m_WarpStrength * glm::clamp(
-            1.0f + std::log(std::abs(glm::length(vertex.position))), 1.0f, 5.0f);
-        displacement = std::min(displacement, maxDisplacement);
-        displacement = std::max(displacement, -maxDisplacement);
-
+        // Displace along the surface normal of the paraboloid.
         const float x = vertex.position.x;
         const float z = vertex.position.z;
-        glm::vec3 trueNormal(-2.0f * x / k, 1.0f, 2.0f * z / k);
-        trueNormal = glm::normalize(trueNormal);
+        const glm::vec3 surfaceNormal = glm::normalize(glm::vec3(-2.0f * x / k, 1.0f, 2.0f * z / k));
+        vertex.position -= (rawDepth - recenterOffset) * surfaceNormal;
+        vertex.normal = surfaceNormal;
+        vertex.color = depthColor(rawDepth, warp.wellDepth);
 
-        float w = 1.0f;
-        glm::vec3 visualNormal = glm::normalize(w * trueNormal + (1.0f - w) * glm::vec3(0.0f, 1.0f, 0.0f));
-
-        vertex.position -= displacement * visualNormal;
+        vertices[v] = vertex;
     }
-
-    for ( size_t i = 0; i < baseVertices.size(); ++i )
-        vertices[i] = baseVertices[i];
 }
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale)
@@ -683,10 +564,17 @@ glm::vec3 convertCoordinates(
                 float distXZ = glm::length(glm::vec2(coordinates.x, coordinates.z));
                 if ( distXZ < 0.01f )
                     distXZ = 0.01f;
-                const float sinAlpha = distXZ / radius;
-                const float alpha = asin(glm::clamp(sinAlpha, 0.0f, 1.0f));
+                const float sinAlpha = glm::clamp(distXZ / radius, 0.0f, 1.0f);
+                // Polar angle from the north pole. asin only covers [0, π/2];
+                // for the southern hemisphere (y < 0) continue past the equator
+                // so a point on the sphere maps to flat y = 0 in BOTH halves.
+                float alpha = asin(sinAlpha);
+                if ( coordinates.y < 0.0f )
+                    alpha = glm::pi<float>() - alpha;
                 const float theta = atan2(coordinates.z, coordinates.x);
                 const float flatDistXZ = alpha * radius;
+                // cos(alpha) is now signed, so on-sphere bodies get yOffset 0
+                // instead of the spurious ~-2R that dropped southern bodies.
                 const float yOffset = coordinates.y - radius * cos(alpha);
                 const glm::vec3 result(
                     flatDistXZ * cos(theta),

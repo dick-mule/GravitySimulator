@@ -28,14 +28,16 @@ struct Vertex
 
 struct Object
 {
-    uint32_t indexOffset;
-    uint32_t indexCount;
-    glm::mat4 modelMatrix;
+    // Rendering: where this object's vertices live in the shared index buffer.
+    uint32_t indexOffset = 0;
+    uint32_t indexCount = 0;
+
+    // Physics. `position` is the single source of truth for location; the
+    // render transform is derived from it at draw time (translate(position)).
     float mass = 0.0f;
     glm::vec3 position = glm::vec3(0.0f);
     glm::vec3 velocity = glm::vec3(0.0f);
     glm::vec3 acceleration = glm::vec3(0.0f);
-    glm::vec3 reference_pos = glm::vec3(0.0f);
 };
 
 

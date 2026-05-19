@@ -67,6 +67,12 @@ set(SOURCES
         src/ImGuiHandler.hpp
         src/GridRenderer.cpp
         src/GridRenderer.hpp
+        src/Simulation.cpp
+        src/Simulation.hpp
+        src/CameraController.cpp
+        src/CameraController.hpp
+        src/VulkanBuffer.cpp
+        src/VulkanBuffer.hpp
         src/Types.cpp
         src/Types.hpp
         src/Geometry.cpp

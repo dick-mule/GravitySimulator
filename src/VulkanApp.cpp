@@ -499,7 +499,7 @@ void VulkanApp::initGridRenderer()
         m_RenderPass,
         m_SwapchainImages,
         m_SwapchainExtent,
-        GeometryType::Flat);
+        m_Simulation);
     m_GridRenderer->init();
     m_GridRenderer->createDepthResources();
 }
@@ -556,18 +556,12 @@ void VulkanApp::mainLoop()
 
         m_ImGuiHandler->newFrame();
         m_GridRenderer->updateCamera();
-        m_GridRenderer->updateSimulation(deltaTime); // Simulate motion
-
-        // Infrastructure step (Option A): keep bodies buffer up to date for the GPU
-        if (m_GridRenderer->getUseGPUGrid())
-        {
-            m_GridRenderer->updateBodiesBuffer();
-            m_GridRenderer->ensureComputeDescriptors();   // ensure both bindings are fresh every frame
-        }
-
-        m_GridRenderer->updateGrid();
+        m_GridRenderer->updateSimulation(deltaTime);     // CPU N-body step
         m_GridRenderer->renderCameraControls();
         m_ImGuiHandler->renderUI(m_GridRenderer.get());
+
+        // The GPU-buffer updates (bodies SSBO, vertex buffer) happen inside
+        // drawFrame(), after the in-flight fence wait — see drawFrame().
         drawFrame();
     }
 
@@ -576,8 +570,18 @@ void VulkanApp::mainLoop()
 
 void VulkanApp::drawFrame()
 {
+    // Wait for the previous frame's GPU work to finish before touching any
+    // buffer it might still be reading.
     auto _ = m_Device.waitForFences(m_InFlightFence, VK_TRUE, UINT64_MAX);
     m_Device.resetFences(m_InFlightFence);
+
+    // Safe now: refresh the data the upcoming frame will read. The bodies SSBO
+    // is host-visible and written directly here (no staging copy / queue
+    // stall); updateGrid() re-uploads the vertex buffer on the CPU warp path
+    // and is a no-op when the GPU compute path owns the grid.
+    if ( m_GridRenderer->getUseGPUGrid() )
+        m_GridRenderer->updateBodiesBuffer();
+    m_GridRenderer->updateGrid();
 
     uint32_t imageIndex;
     auto result = m_Device.acquireNextImageKHR(m_Swapchain, UINT64_MAX, m_ImageAvailableSemaphore, nullptr, &imageIndex);

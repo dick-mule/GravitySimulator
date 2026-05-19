@@ -8,20 +8,88 @@
 
 enum class GeometryType { Flat, Spherical, Hyperbolic };
 
+// =============================================================================
+// Grid warping (gravitational-well visualisation)
+//
+// The warp is a unified, mass-driven model shared by all three geometries.
+// Each body contributes  m04 / sqrt(rEff^2 + softening^2)  where:
+//
+//   m04   = pow(mass, 0.4)                        — compressed mass
+//   width = 1 + radialInfluence * m04             — heavier bodies are wider
+//   rEff  = dist / width                          — mass-scaled distance
+//
+// The contributions are summed, then  depth = wellDepth * tanh(warpGain * sum).
+// Summing inside the tanh bounds the depth by wellDepth (a cluster cannot stack
+// past one well), mass^0.4 keeps the central body's depth dominant, and
+// `radialInfluence` widens heavy bodies so the central reads as a broad basin
+// rather than a narrow cone. A smooth edge taper fades the warp to zero at the
+// grid boundary; Spherical/Hyperbolic also subtract a re-centering offset (the
+// mean warp depth) so the manifold does not drift under a global potential bias.
+// =============================================================================
+
+// Tunable parameters for the grid-warp visualisation.
+struct WarpParams
+{
+    float wellDepth       = 40.0f;   // saturated depth of the warp (world units)
+    float warpGain        = 0.115f;  // how quickly depth saturates with mass
+    float softening       = 1.0f;    // avoids a singular 1/d at a body's centre
+    float radialInfluence = 0.045f;  // couples well width to mass (0 = uniform width)
+};
+
 class Geometry
 {
 protected:
     int m_GridSize;
-    float m_GridScale, m_WarpStrength;
+    float m_GridScale;
+
+    // Cached, un-warped base surface. warpGrid() reuses this instead of
+    // regenerating the full (~640k-vertex) grid every frame. Invalidated
+    // whenever the grid parameters change (see setGridParams).
+    std::vector<Vertex> m_BaseGrid;
+    bool m_BaseGridDirty = true;
+    const std::vector<Vertex>& baseGrid();
+
 public:
-    Geometry(int grid_size, float grid_scale, float warp_strength = 1.);
+    Geometry(int grid_size, float grid_scale);
     virtual ~Geometry() = default;
     virtual void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) = 0;
     virtual float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const = 0;
     virtual void updatePosition(Object& obj, float deltaTime, float radius, bool verlet_half) const = 0;
-    virtual void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) = 0;
-    void setGridParams(int grid_size, float grid_scale) { m_GridSize = grid_size; m_GridScale = grid_scale; }
-    void setWarpStrength(float warp_strength) { m_WarpStrength = warp_strength; }
+
+    /// Total warp depth at a base-grid position: tanh of the summed potential
+    /// of every body. The base implementation uses Euclidean (chord) distance;
+    /// HyperbolicGeometry overrides it to measure along the paraboloid.
+    virtual float warpDepth(const glm::vec3& basePos,
+                            const std::vector<std::shared_ptr<Shape>>& bodies,
+                            const WarpParams& warp) const;
+
+    /// Smooth taper, 1 in the interior falling to 0 at the grid boundary, so
+    /// the edges stay flat regardless of body positions. SphericalGeometry
+    /// overrides it to 1 (a closed surface has no edges).
+    virtual float edgeFade(const glm::vec3& basePos) const;
+
+    /// Mean warp depth over a coarse sample of the base grid — the re-centering
+    /// offset for Spherical / Hyperbolic. (Callers pass 0 for Flat.)
+    float computeRecenterOffset(const std::vector<std::shared_ptr<Shape>>& bodies,
+                                const WarpParams& warp);
+
+    /// Warps `vertices` from the base grid using the model above.
+    virtual void warpGrid(std::vector<Vertex>& vertices,
+                          const std::vector<std::shared_ptr<Shape>>& bodies,
+                          const WarpParams& warp,
+                          float recenterOffset) = 0;
+
+    void setGridParams(int grid_size, float grid_scale)
+    {
+        // Only invalidate the cached base grid when the parameters actually
+        // change — this is called every frame on the CPU warp path.
+        if ( grid_size != m_GridSize || grid_scale != m_GridScale )
+        {
+            m_GridSize = grid_size;
+            m_GridScale = grid_scale;
+            m_BaseGridDirty = true;
+        }
+    }
 };
 
 class FlatGeometry : public Geometry
@@ -33,7 +101,7 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
 };
 
 class SphericalGeometry : public Geometry
@@ -45,7 +113,9 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    // The sphere is a closed surface — no edges to taper.
+    float edgeFade(const glm::vec3& basePos) const override { return 1.0f; }
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
 };
 
 class HyperbolicGeometry : public Geometry
@@ -57,7 +127,11 @@ public:
     void generateGrid(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, uint32_t gridSize, float scale) override;
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
-    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& massiveObjects, float G, float maxDisplacement, float minDistSquared, float softeningLength) override;
+    // Measures the warp distance along the paraboloid surface.
+    float warpDepth(const glm::vec3& basePos,
+                    const std::vector<std::shared_ptr<Shape>>& bodies,
+                    const WarpParams& warp) const override;
+    void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
 };
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale);

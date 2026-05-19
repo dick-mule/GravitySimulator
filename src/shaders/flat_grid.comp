@@ -38,14 +38,13 @@ layout(std430, binding = 1) buffer BodiesBuffer {
 layout(push_constant) uniform PushConstants {
     int   uGridSize;
     float uScale;
-    float G;
-    float warpStrength;
+    float warpGain;        // tanh sensitivity: maps mass -> well depth
+    float wellDepth;       // saturated depth of the warp
     int   numBodies;
-
-    float maxDisplacement;
     float softeningLength;
-
-    int   geometryType;   // 0=Flat, 1=Spherical, 2=Hyperbolic
+    float radialInfluence; // couples well width to mass
+    float recenterOffset;  // mean depth subtracted (Spherical / Hyperbolic)
+    int   geometryType;    // 0=Flat, 1=Spherical, 2=Hyperbolic
 } pc;
 
 void warpFlat(vec3 basePos, uint idx);
@@ -117,118 +116,112 @@ void main()
 }
 
 // ====================== GEOMETRY-SPECIFIC IMPLEMENTATIONS ======================
+//
+// All three share the unified warp model (must match Geometry.cpp exactly):
+//
+//   depth = wellDepth * tanh( warpGain * Σ_body pow(mass,0.4)/softenedDist )
+//
+// A smooth edge taper fades the warp to 0 at the grid boundary (Flat /
+// Hyperbolic), then `recenterOffset` is subtracted and the depth is applied.
+
+// Smoothstep falloff over the outer 15% of the grid -> flat boundary.
+float edgeFade(vec3 basePos)
+{
+    float t = max(abs(basePos.x), abs(basePos.z)) / (pc.uScale * 0.5);
+    return 1.0 - smoothstep(0.85, 1.0, t);
+}
+
+// Heat-map colour: white where flat, fading to dark blue at full well depth.
+// Must match depthColor() in Geometry.cpp.
+vec3 depthColor(float depth)
+{
+    float t = clamp(depth / max(pc.wellDepth, 1e-3), 0.0, 1.0);
+    return mix(vec3(1.0), vec3(0.15, 0.30, 0.65), t);
+}
 
 void warpFlat(vec3 basePos, uint idx)
 {
-    float potential = 0.0f;
+    float sum = 0.0;
     for (int b = 0; b < pc.numBodies; ++b)
     {
-        vec3 bodyPos = bodies[b].pos_mass.xyz;
-        float mass   = bodies[b].pos_mass.w;
-        float size   = bodies[b].size;
-        if (size <= 0.0f) continue;
-
-        float dist = distance(basePos, bodyPos);
-        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
-        potential -= mass / softenedDist;  // Flat uses mass for stronger warping
+        float mass = bodies[b].pos_mass.w;
+        if (mass <= 0.0) continue;
+        float dist  = distance(basePos, bodies[b].pos_mass.xyz);
+        float m04   = pow(mass, 0.4);   // exponent must match kMassExponent (Geometry.cpp)
+        float width = 1.0 + pc.radialInfluence * m04;
+        float rEff  = dist / width;
+        float soft  = sqrt(rEff * rEff + pc.softeningLength * pc.softeningLength);
+        sum += m04 / soft;
     }
-
-    float displacement = -potential * pc.warpStrength;
-    displacement = min(displacement, pc.maxDisplacement);
-    displacement = max(displacement, -pc.maxDisplacement);
+    float raw   = pc.wellDepth * tanh(pc.warpGain * sum) * edgeFade(basePos);
+    float depth = raw - pc.recenterOffset;
 
     vec3 finalPos = basePos;
-    finalPos.y -= displacement;
+    finalPos.y -= depth;
 
     vertices[idx].position = vec4(finalPos, 1.0f);
     vertices[idx].normal   = vec4(0.0f, 1.0f, 0.0f, 1.0f);
-    vertices[idx].color    = vec4(1.0f);
+    vertices[idx].color    = vec4(depthColor(raw), 1.0f);
 }
 
 void warpSpherical(vec3 basePos, uint idx)
 {
-    float potential = 0.0f;
+    float sum = 0.0;
     for (int b = 0; b < pc.numBodies; ++b)
     {
-        vec3 bodyPos = bodies[b].pos_mass.xyz;
-        float mass   = bodies[b].pos_mass.w;
-        float size   = bodies[b].size;
-        if (size <= 0.0f) continue;
-
-        float r1 = length(basePos);
-        float r2 = length(bodyPos);
-        if (r1 < 0.01f || r2 < 0.01f) continue;
-
-        float dist = distance(basePos, bodyPos);
-        if (dist < 0.01f) dist = 0.01f;
-
-        float dist_from_mass = length(basePos - bodyPos);
-        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
-        float damping = 1.0 / max(1.0f, sqrt(dist_from_mass));
-
-        potential -= 3.0f * size * damping * dist / softenedDist;  // Spherical uses visual size (getSize) for the tuned look
+        float mass = bodies[b].pos_mass.w;
+        if (mass <= 0.0) continue;
+        float dist  = distance(basePos, bodies[b].pos_mass.xyz);
+        float m04   = pow(mass, 0.4);   // exponent must match kMassExponent (Geometry.cpp)
+        float width = 1.0 + pc.radialInfluence * m04;
+        float rEff  = dist / width;
+        float soft  = sqrt(rEff * rEff + pc.softeningLength * pc.softeningLength);
+        sum += m04 / soft;
     }
-
-    float displacement = potential * pc.warpStrength;
-    displacement = min(displacement, pc.maxDisplacement);
-    displacement = max(displacement, -pc.maxDisplacement);
+    // The sphere is closed — no edge taper.
+    float raw   = pc.wellDepth * tanh(pc.warpGain * sum);
+    float depth = raw - pc.recenterOffset;
 
     float R = pc.uScale * 0.5f;
     vec3 radialDir = normalize(basePos);
-    float newRadius = max(R + 30.0f * displacement, 0.5f * R);
-
+    float newRadius = max(R - depth, 0.3f * R);   // wells dimple inward
     vec3 finalPos = radialDir * newRadius;
 
     vertices[idx].position = vec4(finalPos, 1.0f);
-    vertices[idx].normal   = vec4(normalize(finalPos), 0.0);
-    vertices[idx].color    = vec4(1.0f);
+    vertices[idx].normal   = vec4(radialDir, 0.0);
+    vertices[idx].color    = vec4(depthColor(raw), 1.0f);
 }
 
 void warpHyperbolic(vec3 basePos, uint idx)
 {
-    float R = pc.uScale * 0.5f;
     float k = pc.uScale;
 
-    float rSquared = basePos.x * basePos.x + basePos.z * basePos.z;
-    float damping = 1.0f - rSquared / (R * R);
-    if (damping < 0.0f) damping = 0.0f;
-
-    float potential = 0.0f;
+    float sum = 0.0;
     for (int b = 0; b < pc.numBodies; ++b)
     {
-        vec3 bodyPos = bodies[b].pos_mass.xyz;
-        float mass   = bodies[b].pos_mass.w;
-        float size   = bodies[b].size;
-        if (size <= 0.0f) continue;
-
-        vec3 pos1 = basePos;
-        vec3 pos2 = bodyPos;
-
-        float diffY = (pos2.x * pos2.x - pos2.z * pos2.z) / k - (pos1.x * pos1.x - pos1.z * pos1.z) / k;
-        vec3 diff = vec3(pos2.x - pos1.x, diffY, pos2.z - pos1.z);
-
-        float dist = length(diff);
-        if (dist >= 1e30f) continue;
-
-        float softenedDist = sqrt(dist * dist + pc.softeningLength * pc.softeningLength);
-        potential -= mass / softenedDist;  // Hyperbolic uses mass for stronger effect (matching CPU)
+        float mass = bodies[b].pos_mass.w;
+        if (mass <= 0.0) continue;
+        vec3 bp = bodies[b].pos_mass.xyz;
+        // Distance measured along the paraboloid surface.
+        float diffY = (bp.x * bp.x - bp.z * bp.z) / k
+                    - (basePos.x * basePos.x - basePos.z * basePos.z) / k;
+        vec3 diff = vec3(bp.x - basePos.x, diffY, bp.z - basePos.z);
+        float dist  = length(diff);
+        float m04   = pow(mass, 0.4);   // exponent must match kMassExponent (Geometry.cpp)
+        float width = 1.0 + pc.radialInfluence * m04;
+        float rEff  = dist / width;
+        float soft  = sqrt(rEff * rEff + pc.softeningLength * pc.softeningLength);
+        sum += m04 / soft;
     }
-
-    float len = length(basePos);
-    float logTerm = clamp(1.0f + log(abs(len)), 1.0f, 5.0f);
-
-    float displacement = -potential * pc.warpStrength * logTerm;
-    displacement = min(displacement, pc.maxDisplacement);
-    displacement = max(displacement, -pc.maxDisplacement);
+    float raw   = pc.wellDepth * tanh(pc.warpGain * sum) * edgeFade(basePos);
+    float depth = raw - pc.recenterOffset;
 
     float x = basePos.x;
     float z = basePos.z;
-    vec3 trueNormal = normalize(vec3(-2.0f * x / k, 1.0f, 2.0f * z / k));
-    vec3 visualNormal = normalize(mix(vec3(0.0f, 1.0f, 0.0f), trueNormal, 0.5f));
-
-    vec3 finalPos = basePos - displacement * visualNormal;
+    vec3 surfaceNormal = normalize(vec3(-2.0f * x / k, 1.0f, 2.0f * z / k));
+    vec3 finalPos = basePos - depth * surfaceNormal;
 
     vertices[idx].position = vec4(finalPos, 1.0f);
-    vertices[idx].normal   = vec4(visualNormal, 0.0);
-    vertices[idx].color    = vec4(1.0f);
+    vertices[idx].normal   = vec4(surfaceNormal, 0.0);
+    vertices[idx].color    = vec4(depthColor(raw), 1.0f);
 }

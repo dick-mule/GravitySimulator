@@ -9,8 +9,10 @@
 #include <memory>
 
 #include "Geometry.hpp"
+#include "VulkanBuffer.hpp"
+#include "CameraController.hpp"
+#include "Simulation.hpp"
 #include <glm/gtc/type_ptr.hpp>
-#include <deque>
 
 
 class GridRenderer
@@ -24,7 +26,7 @@ public:
         const vk::RenderPass& renderPass,
         const std::vector<vk::Image>& swapchainImages,
         const vk::Extent2D& swapchainExtent,
-        GeometryType geometryType);
+        Simulation& simulation);
     ~GridRenderer();
 
     void init();
@@ -55,40 +57,32 @@ public:
     const std::vector<vk::ImageView>& getDepthImageViews() const { return m_DepthImageViews; }
 
 private:
-    // Configuration values declared early so they are safely initialized before any
-    // initializer-list expressions that depend on them (e.g. geometryFactory).
+    // Grid dimensions are cached from the Simulation in the constructor (it is
+    // the single source of truth); the defaults here are just placeholders.
     int m_GridSize = 800;
     float m_GridScale = 320.0f;
-    float m_Gravity = 0.2f;
-    float m_WarpStrength = 1.0f;
+    float m_VelocityAngle = 0.0f;   // unused diagnostic slider
 
-    // New tunable parameters for the improved GPU warping model
-    float m_GlobalSagStrength = 4.0f;    // TEMP: very aggressive for testing
-    float m_GlobalScale       = 60.0f;   // TEMP: aggressive for testing
-    float m_LocalWellStrength = 5.0f;    // TEMP: very aggressive for testing
-    float m_WellSteepness     = 1.8f;    // TEMP: aggressive for testing
-    float m_TimeStep = 0.05f;
-    float m_ZoomLevel = 0.;
-    float m_OrbitFactor = 1.0f;
-    float m_VelocityAngle = 0.0f;
+    // Grid-warp (gravitational-well visualisation) dials — UI-tunable.
+    WarpParams m_Warp;
+    float m_RecenterOffset = 0.0f;  // mean warp depth, recomputed each frame
+
+    // The CPU N-body simulation — owned by VulkanApp and referenced here, so
+    // it outlives this renderer across swapchain recreation (window resize).
+    Simulation& m_Simulation;
 
     // GPU grid deformation is now the default (high-performance path).
     // The checkbox in the Controls window can still toggle back to CPU fallback for comparison.
     bool m_UseGPUGrid = true;
 
-    // Bodies buffer for GPU compute (position + mass)
-    // This is the infrastructure we're building first (Option A)
-    vk::Buffer m_BodiesBuffer;
-    vk::DeviceMemory m_BodiesBufferMemory;
-    size_t m_BodiesBufferCapacity = 0;  // to avoid unnecessary recreation
+    // Bodies buffer for GPU compute (position + mass), uploaded each frame.
+    VulkanBuffer m_BodiesBuffer;
 
     glm::vec3 m_CenterOfMass = glm::vec3(0.0f);  // computed when GPU mode is active
 
-    // Buffer to store per-vertex delta (for recentering pass)
-    // Used for Spherical and Hyperbolic to remove global bias after warping
-    vk::Buffer m_DeltaBuffer;
-    vk::DeviceMemory m_DeltaBufferMemory;
-    size_t m_DeltaBufferCapacity = 0;
+    // Per-vertex delta buffer reserved for the (currently disabled) recentering
+    // pass that removes global bias after Spherical/Hyperbolic warping.
+    VulkanBuffer m_DeltaBuffer;
 
     std::shared_ptr<Geometry> m_Geometry;
     GeometryType m_CurrentGeometryType;
@@ -102,44 +96,29 @@ private:
 
     std::vector<Vertex> m_Vertices;
     std::vector<uint32_t> m_Indices;
-    vk::Buffer m_VertexBuffer;
-    vk::DeviceMemory m_VertexBufferMemory;
-    vk::Buffer m_IndexBuffer;
-    vk::DeviceMemory m_IndexBufferMemory;
+    VulkanBuffer m_VertexBuffer;
+    VulkanBuffer m_IndexBuffer;
     vk::PipelineLayout m_PipelineLayout;
-    vk::Pipeline m_GraphicsPipeline, m_LinePipeline, m_TrianglePipeline;
+    vk::Pipeline m_GraphicsPipeline, m_TrianglePipeline;
 
     // Compute pipeline for GPU-driven grid (positions + warping)
     vk::PipelineLayout m_ComputePipelineLayout;
     vk::Pipeline m_ComputePipeline;
-    vk::Pipeline m_RecenterPipeline;  // for the recentering entry point (Spherical/Hyperbolic bias removal)
     vk::DescriptorSetLayout m_ComputeDescriptorSetLayout;
     vk::DescriptorPool m_ComputeDescriptorPool;
     vk::DescriptorSet m_ComputeDescriptorSet;
     PushConstants m_PushConstants;
-    Camera m_Camera;
+    CameraController m_CameraController;
     std::vector<vk::Image> m_DepthImages;
     std::vector<vk::DeviceMemory> m_DepthImageMemory;
     std::vector<vk::ImageView> m_DepthImageViews;
     vk::Format m_DepthFormat;
 
     Object m_GridObject;
-    std::vector<std::shared_ptr<Shape>> m_MassiveObjects;
-    float m_TotalEnergy = 0.0f;
-    float m_KineticEnergy = 0.0f;
-    float m_PotentialEnergy = 0.0f;
-
-    struct Trail {
-        std::deque<glm::vec3> positions;
-        static constexpr size_t maxPoints = 100; // Number of points in the trail
-    };
-    std::vector<Trail> m_Trails; // One trail per object
     std::vector<Vertex> m_TrailVertices;
     std::vector<uint32_t> m_TrailIndices;
-    vk::Buffer m_TrailVertexBuffer;
-    vk::DeviceMemory m_TrailVertexBufferMemory;
-    vk::Buffer m_TrailIndexBuffer;
-    vk::DeviceMemory m_TrailIndexBufferMemory;
+    VulkanBuffer m_TrailVertexBuffer;
+    VulkanBuffer m_TrailIndexBuffer;
 
     void generateGrid();
     void createVertexBuffer();
@@ -147,11 +126,12 @@ private:
     void createGraphicsPipeline();
     void createComputePipeline();   // GPU grid generation / warping
     void updateGeometry(GeometryType type);
-    void addShape(const std::shared_ptr<Shape>& shape) { m_MassiveObjects.push_back(shape); }
     void updateTrails();
 
-    vk::Buffer createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage) const;
-    vk::DeviceMemory allocateBufferMemory(vk::Buffer buffer, vk::MemoryPropertyFlags properties) const;
+    // Allocates a VulkanBuffer on this renderer's device / physical device.
+    VulkanBuffer makeBuffer(vk::DeviceSize size,
+                            vk::BufferUsageFlags usage,
+                            vk::MemoryPropertyFlags properties) const;
     void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
     vk::CommandBuffer beginSingleTimeCommands() const;
     void endSingleTimeCommands(vk::CommandBuffer commandBuffer) const;
