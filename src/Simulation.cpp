@@ -92,8 +92,18 @@ void Simulation::spawnBodies(GeometryType type)
 
 void Simulation::step(float deltaTime)
 {
-    const float R = m_GridScale / 2.0f;
     deltaTime = std::min(deltaTime, m_TimeStep);
+
+    // Static mode freezes the bodies — the orbits, and the curvature they
+    // produce, hold still — but the rays keep travelling: they still animate
+    // one step per frame, just through a fixed field.
+    if ( m_RaysStatic )
+    {
+        advanceRays(deltaTime);
+        return;
+    }
+
+    const float R = m_GridScale / 2.0f;
 
     // Step 1: velocity-Verlet half-step (kick + drift) and reset accelerations.
     #pragma omp parallel for schedule(dynamic)
@@ -376,91 +386,106 @@ glm::vec3 Simulation::liftRayPoint(const glm::vec3& basePos) const
     return m_Geometry->warpedPosition(basePos, raw - rayLift, m_RayRecenter);
 }
 
-// Advances every active ray one geodesic step along the manifold, optionally
-// deflected by the masses (lensing). Speed is renormalised each step so the
-// path stays a constant-speed (null) geodesic — light bends but never speeds up.
-void Simulation::advanceRays(float deltaTime)
+// Advances one light ray by a single geodesic step along the manifold,
+// optionally rotated toward the masses (lensing). Speed is constant — the path
+// stays a null geodesic. Used both per-frame (dynamic mode) and in a tight loop
+// (static mode); it touches only this ray, so it is OpenMP-safe across rays.
+void Simulation::advanceRayOneStep(LightRay& ray, float deltaTime)
 {
-    if ( m_Rays.empty() )
-        return;
-
     const float R = m_GridScale * 0.5f;
     const float kPara = m_GridScale;
     const float step = m_RaySpeed * deltaTime;
     const float bound = 0.55f * m_GridScale;
     constexpr float soft2 = 4.0f;   // softening^2 for the lensing acceleration
+
+    glm::vec3 pos = ray.position;
+    glm::vec3 dir = ray.direction;
+
+    // --- Lensing: rotate the direction toward the masses --------------------
+    if ( m_LensingEnabled )
+    {
+        glm::vec3 accel(0.0f);
+        for ( const auto& shape : m_Bodies )
+        {
+            const Object& b = shape->m_Object;
+            const glm::vec3 toBody = b.position - pos;
+            const float d2 = glm::dot(toBody, toBody) + soft2;
+            accel += m_RayLensStrength * b.mass * toBody / (d2 * std::sqrt(d2));
+        }
+
+        // Only the pull perpendicular to travel bends a null geodesic (the
+        // parallel part would change speed). Apply it as a rotation of `dir`
+        // by a per-step-clamped angle: even the intense field next to the
+        // central mass then turns the ray smoothly instead of collapsing or
+        // flipping the direction vector in a single step.
+        const glm::vec3 perp = accel - glm::dot(accel, dir) * dir;
+        const float perpLen = glm::length(perp);
+        if ( perpLen > 1e-8f )
+        {
+            constexpr float maxTurn = 0.2f;   // radians per step
+            const float angle = std::min(perpLen * deltaTime, maxTurn);
+            const glm::vec3 turnAxis = perp / perpLen;   // unit, perpendicular to dir
+            dir = glm::normalize(dir * std::cos(angle) + turnAxis * std::sin(angle));
+        }
+    }
+
+    // --- Geodesic step on the active manifold -------------------------------
+    if ( m_GeometryType == GeometryType::Spherical )
+    {
+        // Keep the direction tangent to the sphere, then rotate position
+        // and direction together along the great circle (exact).
+        const glm::vec3 n = glm::normalize(pos);
+        dir = dir - glm::dot(dir, n) * n;
+        if ( glm::length(dir) < 1e-6f ) { ray.active = false; return; }
+        dir = glm::normalize(dir);
+
+        const float theta = step / R;
+        const glm::vec3 newPos = pos * std::cos(theta) + R * dir * std::sin(theta);
+        const glm::vec3 newDir = dir * std::cos(theta) - (pos / R) * std::sin(theta);
+        pos = newPos;
+        dir = glm::normalize(newDir);
+    }
+    else if ( m_GeometryType == GeometryType::Hyperbolic )
+    {
+        dir = glm::normalize(dir);
+        pos += dir * step;
+        pos.y = (pos.x * pos.x - pos.z * pos.z) / kPara;   // snap to paraboloid
+        // Re-tangent the direction to the new surface point.
+        const glm::vec3 nrm =
+            glm::normalize(glm::vec3(-2.0f * pos.x / kPara, 1.0f, 2.0f * pos.z / kPara));
+        dir = dir - glm::dot(dir, nrm) * nrm;
+        if ( glm::length(dir) < 1e-6f ) { ray.active = false; return; }
+        dir = glm::normalize(dir);
+    }
+    else
+    {
+        // Flat: a straight line in the y = 0 plane.
+        dir.y = 0.0f;
+        if ( glm::length(dir) < 1e-6f ) { ray.active = false; return; }
+        dir = glm::normalize(dir);
+        pos += dir * step;
+        pos.y = 0.0f;
+    }
+
+    ray.position  = pos;
+    ray.direction = dir;
+    ray.trail.push_back(liftRayPoint(pos));   // lift once, store lifted
+    if ( ray.trail.size() > LightRay::maxPoints )
+        ray.trail.pop_front();
+
+    // Open manifolds: stop a ray once it leaves the grid footprint.
+    if ( m_GeometryType != GeometryType::Spherical &&
+         (std::abs(pos.x) > bound || std::abs(pos.z) > bound) )
+        ray.active = false;
+}
+
+// Dynamic mode: advance every live ray one geodesic step (called from step()).
+void Simulation::advanceRays(float deltaTime)
+{
 #pragma omp parallel for
     for ( auto& ray : m_Rays )
-    {
-        if ( !ray.active )
-            continue;
-
-        glm::vec3 pos = ray.position;
-        glm::vec3 dir = ray.direction;
-
-        // --- Lensing: deflect the direction toward the masses ---------------
-        if ( m_LensingEnabled )
-        {
-            glm::vec3 accel(0.0f);
-            for ( const auto& shape : m_Bodies )
-            {
-                const Object& b = shape->m_Object;
-                const glm::vec3 toBody = b.position - pos;
-                const float d2 = glm::dot(toBody, toBody) + soft2;
-                accel += m_RayLensStrength * b.mass * toBody / (d2 * std::sqrt(d2));
-            }
-            dir += accel * deltaTime;   // renormalised below, so speed is unchanged
-        }
-
-        // --- Geodesic step on the active manifold ---------------------------
-        if ( m_GeometryType == GeometryType::Spherical )
-        {
-            // Keep the direction tangent to the sphere, then rotate position
-            // and direction together along the great circle (exact).
-            const glm::vec3 n = glm::normalize(pos);
-            dir = dir - glm::dot(dir, n) * n;
-            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
-            dir = glm::normalize(dir);
-
-            const float theta = step / R;
-            const glm::vec3 newPos = pos * std::cos(theta) + R * dir * std::sin(theta);
-            const glm::vec3 newDir = dir * std::cos(theta) - (pos / R) * std::sin(theta);
-            pos = newPos;
-            dir = glm::normalize(newDir);
-        }
-        else if ( m_GeometryType == GeometryType::Hyperbolic )
-        {
-            dir = glm::normalize(dir);
-            pos += dir * step;
-            pos.y = (pos.x * pos.x - pos.z * pos.z) / kPara;   // snap to paraboloid
-            // Re-tangent the direction to the new surface point.
-            const glm::vec3 nrm =
-                glm::normalize(glm::vec3(-2.0f * pos.x / kPara, 1.0f, 2.0f * pos.z / kPara));
-            dir = dir - glm::dot(dir, nrm) * nrm;
-            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
-            dir = glm::normalize(dir);
-        }
-        else
-        {
-            // Flat: a straight line in the y = 0 plane.
-            dir.y = 0.0f;
-            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
-            dir = glm::normalize(dir);
-            pos += dir * step;
-            pos.y = 0.0f;
-        }
-
-        ray.position  = pos;
-        ray.direction = dir;
-        ray.trail.push_back(liftRayPoint(pos));   // lift once, store lifted
-        if ( ray.trail.size() > LightRay::maxPoints )
-            ray.trail.pop_front();
-
-        // Open manifolds: stop a ray once it leaves the grid footprint.
-        if ( m_GeometryType != GeometryType::Spherical &&
-             (std::abs(pos.x) > bound || std::abs(pos.z) > bound) )
-            ray.active = false;
-    }
+        if ( ray.active )
+            advanceRayOneStep(ray, deltaTime);
 }
 
 void Simulation::resetTwoBody()

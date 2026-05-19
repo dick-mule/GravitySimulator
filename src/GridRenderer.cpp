@@ -1165,6 +1165,17 @@ void GridRenderer::renderCameraControls()
     // Null-geodesic (light-ray) demo. Emit a fan of rays, then toggle Lensing:
     // off = pure manifold geodesics (curvature deviation), on = light bending.
     ImGui::Separator();
+
+    // Ray Mode — Dynamic: rays advance against the live, moving field.
+    // Static: the bodies (and the curvature they produce) are frozen, but rays
+    // still travel one step per frame — animating through a fixed snapshot.
+    int rayMode = m_Simulation.raysStatic() ? 1 : 0;
+    if ( ImGui::Combo("Ray Mode", &rayMode, "Dynamic\0Static (frozen)\0") )
+    {
+        m_Simulation.raysStatic() = (rayMode == 1);
+        m_Simulation.clearRays();   // rays from the other mode no longer apply
+    }
+
     if ( ImGui::Button("Emit Rays") )
         m_Simulation.emitRays();
     ImGui::SameLine();
@@ -1172,7 +1183,7 @@ void GridRenderer::renderCameraControls()
         m_Simulation.clearRays();
     ImGui::SameLine();
     ImGui::Checkbox("Lensing", &m_Simulation.lensingEnabled());
-    ImGui::SliderInt("Ray Count", &m_Simulation.rayCount(), 3, 41);
+    ImGui::SliderInt("Ray Count", &m_Simulation.rayCount(), 3, 400);
     ImGui::DragFloat("Ray Speed", &m_Simulation.raySpeed(), 1.0f, 1.0f, 200.0f, "%.0f");
     if ( m_Simulation.lensingEnabled() )
         ImGui::DragFloat("Lens Strength", &m_Simulation.rayLensStrength(), 0.005f, 0.0f, 1.0f, "%.3f");

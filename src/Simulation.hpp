@@ -98,6 +98,7 @@ public:
     [[nodiscard]] float& timeStep()       { return m_TimeStep; }
     [[nodiscard]] bool&  mergeEnabled()   { return m_MergeEnabled; }
     [[nodiscard]] bool&  lensingEnabled() { return m_LensingEnabled; }
+    [[nodiscard]] bool&  raysStatic()     { return m_RaysStatic; }
     [[nodiscard]] int&   rayCount()       { return m_RayCount; }
     [[nodiscard]] float& rayLensStrength(){ return m_RayLensStrength; }
     [[nodiscard]] float& raySpeed()       { return m_RaySpeed; }
@@ -105,7 +106,8 @@ public:
 
 private:
     void spawnBodies(GeometryType type);
-    void advanceRays(float deltaTime);   // one geodesic step for every light ray
+    void advanceRays(float deltaTime);             // one geodesic step per live ray
+    void advanceRayOneStep(LightRay& ray, float deltaTime);
     glm::vec3 liftRayPoint(const glm::vec3& basePos) const;  // base -> warped surface
 
     std::vector<std::shared_ptr<Shape>> m_Bodies;
@@ -132,6 +134,7 @@ private:
     WarpParams m_RayWarp;             // warp config used to lift ray points
     float m_RayRecenter = 0.0f;       // matching re-centering offset
     bool  m_LensingEnabled  = true;   // deflect rays by the masses (vs pure geodesic)
+    bool  m_RaysStatic      = false;  // true = freeze the sim, trace each ray fully on emit
     int   m_RayCount        = 200;     // rays per emitted fan
     float m_RayLensStrength = 0.05f;  // how strongly masses bend the rays
     float m_RaySpeed        = 30.0f;  // constant ray speed (world units / sec)

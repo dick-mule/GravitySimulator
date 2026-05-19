@@ -25,7 +25,9 @@ A real-time, GPU-accelerated gravity simulator featuring a deformable visualizat
 - **Null Geodesics (Light Rays)**
   - Trace a fan of massless rays along the geodesics of the active manifold
   - **Lensing on** — rays are deflected by the masses (light-bending); **off** — pure geodesics, so a parallel fan reveals the manifold's curvature (geodesic deviation: parallel on Flat, converging on Spherical, diverging on Hyperbolic)
-  - Speed is renormalized each step, so the path stays a constant-speed (null) geodesic; rays ride the warped surface so each deflection's cause is visible
+  - **Dynamic mode** — rays travel against the live, moving field; **Static mode** — the bodies (and the curvature they produce) are frozen, but the rays still animate one step per frame, so you can isolate the lensing pattern of a single snapshot without losing the motion
+  - Bounded-rotation deflection: the lensing pull is applied as a per-step-clamped rotation of the ray direction, so even the intense field next to a heavy mass turns the ray smoothly (it can curve sharply or even loop) instead of collapsing or flipping the direction vector in one step
+  - Rays ride the warped surface so each deflection's cause is visible, at constant speed (a true null geodesic)
 
 - **High-Performance CPU Fallback**
   - OpenMP-parallelized warping on all three geometries
@@ -90,8 +92,15 @@ The GPU path stays at the display refresh rate even with a dense 800×800 vertex
 - **Null Geodesics**
   - A light ray is a massless tracer integrated along the manifold geodesic — straight lines on
     Flat, exact great-circle rotation on Spherical, constrained-particle steps on Hyperbolic
-  - With lensing enabled it also feels a `∝ mass/dist²` deflection; speed is renormalized each
-    step so it bends without speeding up — a true null geodesic
+  - With lensing enabled it also feels a `∝ mass/dist²` deflection. Only the component
+    perpendicular to travel is used (the parallel component would change speed), and it is
+    applied as a **rotation of `dir` by a per-step-clamped angle** rather than added to the
+    direction vector — so even the intense field next to a heavy mass turns the ray smoothly
+    instead of collapsing or flipping it in one step. Combined with constant speed, the path
+    stays a true null geodesic that can curve sharply or even loop around a mass.
+  - Two modes: **Dynamic** ticks the rays against the live field every frame; **Static** keeps
+    the rays animating but stops the N-body update inside `step()`, so the orbits and the
+    curvature they produce are frozen while the rays trace through that fixed snapshot.
   - Each traced point is lifted onto the warped surface **once**, when added, so a dense fan of
     rays costs only one lift per ray per frame rather than re-lifting the whole trail history
 
@@ -240,7 +249,7 @@ sets from it), and the `ImGuiHandler` destructor is ordered accordingly.
 - **Camera Controls**: Orbit, zoom, pan, and adjust FOV (near/far planes auto-fit the scene)
 - **Simulation Parameters**: Gravity strength, time step, orbit speed factor, etc.
 - **Warp & Membrane**: Well depth, warp gain, radial influence, and the membrane's stiffness / wave speed / damping
-- **Light Rays**: Emit / clear a ray fan, toggle lensing, and tune ray count, speed, and lens strength
+- **Light Rays**: pick **Ray Mode** (Dynamic — live field; Static — frozen orbits, animated rays), Emit / Clear a ray fan, toggle Lensing, and tune ray count, speed, and lens strength
 
 ## Building
 
