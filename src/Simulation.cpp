@@ -207,13 +207,47 @@ void Simulation::step(float deltaTime)
             positions.pop_front();
     }
 
-    // Conserved-quantity bookkeeping.
+    // Step 4: inelastic merging — bodies that touch coalesce into one. This
+    // doubles as accretion and as a cure for close-encounter slingshots. One
+    // merge per step keeps the index bookkeeping simple (merges are rare).
+    if ( m_MergeEnabled && m_Bodies.size() > 1 )
+    {
+        const float mergeDist = m_GridScale * 0.02f;   // collision radius
+        bool merged = false;
+        for ( size_t i = 0; i < m_Bodies.size() && !merged; ++i )
+        {
+            for ( size_t j = i + 1; j < m_Bodies.size() && !merged; ++j )
+            {
+                Object& a = m_Bodies[i]->m_Object;
+                Object& b = m_Bodies[j]->m_Object;
+                if ( glm::length(a.position - b.position) >= mergeDist )
+                    continue;
+
+                // Conserve mass and momentum; the merged body keeps slot i.
+                const float m = a.mass + b.mass;
+                a.position = (a.mass * a.position + b.mass * b.position) / m;
+                a.velocity = (a.mass * a.velocity + b.mass * b.velocity) / m;
+                a.acceleration = glm::vec3(0.0f);
+                a.mass = m;
+                m_Bodies[i]->setSize(std::max(1.0f + std::log(m / std::sqrt(m_GridScale)), 0.6f));
+
+                m_Bodies.erase(m_Bodies.begin() + static_cast<long>(j));
+                m_Trails.erase(m_Trails.begin() + static_cast<long>(j));
+                m_BodiesChanged = true;
+                merged = true;
+            }
+        }
+    }
+
+    // Conserved-quantity bookkeeping (post-merge).
     m_KineticEnergy = 0.0f;
     m_PotentialEnergy = 0.0f;
+    glm::vec3 angMom(0.0f);
     for ( const auto& shape : m_Bodies )
     {
-        const float speedSquared = glm::length2(shape->m_Object.velocity);
-        m_KineticEnergy += 0.5f * shape->m_Object.mass * speedSquared;
+        const Object& obj = shape->m_Object;
+        m_KineticEnergy += 0.5f * obj.mass * glm::length2(obj.velocity);
+        angMom += obj.mass * glm::cross(obj.position, obj.velocity);
     }
     for ( size_t i = 0; i < m_Bodies.size(); ++i )
     {
@@ -228,6 +262,10 @@ void Simulation::step(float deltaTime)
         }
     }
     m_TotalEnergy = m_KineticEnergy + m_PotentialEnergy;
+    m_AngularMomentum = glm::length(angMom);
+
+    // Step 5: advance the null geodesics (light rays).
+    advanceRays(deltaTime);
 }
 
 void Simulation::switchGeometry(GeometryType type)
@@ -270,6 +308,159 @@ void Simulation::switchGeometry(GeometryType type)
             pos = convertCoordinates(pos, m_GeometryType, type, R, m_Geometry);
 
     m_GeometryType = type;
+
+    // Rays were traced on the old manifold — drop them on a geometry change.
+    clearRays();
+}
+
+// ============================ NULL GEODESICS ================================
+
+void Simulation::clearRays()
+{
+    m_Rays.clear();
+}
+
+// Emits a fan of parallel light rays suited to the active geometry: a straight
+// line of rays crossing the grid (Flat / Hyperbolic), or a spray of meridians
+// rising from the equator (Spherical).
+void Simulation::emitRays()
+{
+    m_Rays.clear();
+    const int count = std::max(m_RayCount, 1);
+    const float R = m_GridScale * 0.75f;
+
+    for ( int k = 0; k < count; ++k )
+    {
+        const float frac = count > 1 ? static_cast<float>(k) / (count - 1) : 0.75f;
+        LightRay ray;
+
+        if ( m_GeometryType == GeometryType::Spherical )
+        {
+            // Meridians: start spread along the equator, all heading north.
+            // Parallel at the equator, they converge at the pole.
+            const float lon = (frac - 0.5f) * 1.4f;   // longitude spread (rad)
+            ray.position  = R * glm::vec3(std::cos(lon), 0.0f, std::sin(lon));
+            ray.direction = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+        else
+        {
+            // Flat / Hyperbolic: a line of rays on one side, crossing in +x.
+            const float spread = 0.30f * m_GridScale;
+            const float z = (frac - 0.5f) * 2.0f * spread;
+            const float x = -0.42f * m_GridScale;
+            if ( m_GeometryType == GeometryType::Hyperbolic )
+            {
+                const float kPara = m_GridScale;
+                ray.position  = glm::vec3(x, (x * x - z * z) / kPara, z);
+                ray.direction = glm::normalize(glm::vec3(1.0f, 2.0f * x / kPara, 0.0f));
+            }
+            else
+            {
+                ray.position  = glm::vec3(x, 0.0f, z);
+                ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
+            }
+        }
+
+        ray.trail.push_back(liftRayPoint(ray.position));
+        m_Rays.push_back(std::move(ray));
+    }
+}
+
+// Lifts a ray's base-manifold position onto the warped surface (slightly clear
+// of the grid) so the traced path rides the potential wells. Called once per
+// point as it is traced — never re-evaluated for the whole trail history.
+glm::vec3 Simulation::liftRayPoint(const glm::vec3& basePos) const
+{
+    const float rayLift = m_GridScale * 0.005f;
+    const float raw = m_Geometry->warpDepth(basePos, m_Bodies, m_RayWarp);
+    return m_Geometry->warpedPosition(basePos, raw - rayLift, m_RayRecenter);
+}
+
+// Advances every active ray one geodesic step along the manifold, optionally
+// deflected by the masses (lensing). Speed is renormalised each step so the
+// path stays a constant-speed (null) geodesic — light bends but never speeds up.
+void Simulation::advanceRays(float deltaTime)
+{
+    if ( m_Rays.empty() )
+        return;
+
+    const float R = m_GridScale * 0.5f;
+    const float kPara = m_GridScale;
+    const float step = m_RaySpeed * deltaTime;
+    const float bound = 0.55f * m_GridScale;
+    constexpr float soft2 = 4.0f;   // softening^2 for the lensing acceleration
+#pragma omp parallel for
+    for ( auto& ray : m_Rays )
+    {
+        if ( !ray.active )
+            continue;
+
+        glm::vec3 pos = ray.position;
+        glm::vec3 dir = ray.direction;
+
+        // --- Lensing: deflect the direction toward the masses ---------------
+        if ( m_LensingEnabled )
+        {
+            glm::vec3 accel(0.0f);
+            for ( const auto& shape : m_Bodies )
+            {
+                const Object& b = shape->m_Object;
+                const glm::vec3 toBody = b.position - pos;
+                const float d2 = glm::dot(toBody, toBody) + soft2;
+                accel += m_RayLensStrength * b.mass * toBody / (d2 * std::sqrt(d2));
+            }
+            dir += accel * deltaTime;   // renormalised below, so speed is unchanged
+        }
+
+        // --- Geodesic step on the active manifold ---------------------------
+        if ( m_GeometryType == GeometryType::Spherical )
+        {
+            // Keep the direction tangent to the sphere, then rotate position
+            // and direction together along the great circle (exact).
+            const glm::vec3 n = glm::normalize(pos);
+            dir = dir - glm::dot(dir, n) * n;
+            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
+            dir = glm::normalize(dir);
+
+            const float theta = step / R;
+            const glm::vec3 newPos = pos * std::cos(theta) + R * dir * std::sin(theta);
+            const glm::vec3 newDir = dir * std::cos(theta) - (pos / R) * std::sin(theta);
+            pos = newPos;
+            dir = glm::normalize(newDir);
+        }
+        else if ( m_GeometryType == GeometryType::Hyperbolic )
+        {
+            dir = glm::normalize(dir);
+            pos += dir * step;
+            pos.y = (pos.x * pos.x - pos.z * pos.z) / kPara;   // snap to paraboloid
+            // Re-tangent the direction to the new surface point.
+            const glm::vec3 nrm =
+                glm::normalize(glm::vec3(-2.0f * pos.x / kPara, 1.0f, 2.0f * pos.z / kPara));
+            dir = dir - glm::dot(dir, nrm) * nrm;
+            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
+            dir = glm::normalize(dir);
+        }
+        else
+        {
+            // Flat: a straight line in the y = 0 plane.
+            dir.y = 0.0f;
+            if ( glm::length(dir) < 1e-6f ) { ray.active = false; continue; }
+            dir = glm::normalize(dir);
+            pos += dir * step;
+            pos.y = 0.0f;
+        }
+
+        ray.position  = pos;
+        ray.direction = dir;
+        ray.trail.push_back(liftRayPoint(pos));   // lift once, store lifted
+        if ( ray.trail.size() > LightRay::maxPoints )
+            ray.trail.pop_front();
+
+        // Open manifolds: stop a ray once it leaves the grid footprint.
+        if ( m_GeometryType != GeometryType::Spherical &&
+             (std::abs(pos.x) > bound || std::abs(pos.z) > bound) )
+            ray.active = false;
+    }
 }
 
 void Simulation::resetTwoBody()

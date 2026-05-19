@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <vector>
 #include <random>
+#include <cfloat>
+#include <cstdio>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -147,7 +149,7 @@ GridRenderer::GridRenderer(
 
 GridRenderer::~GridRenderer()
 {
-    // Buffers (m_VertexBuffer, m_IndexBuffer, m_BodiesBuffer, m_DeltaBuffer,
+    // Buffers (m_VertexBuffer, m_IndexBuffer, m_BodiesBuffer, m_MembraneBuffer,
     // m_TrailVertexBuffer, m_TrailIndexBuffer) are VulkanBuffer members and
     // free themselves when this object is destroyed.
 
@@ -182,9 +184,33 @@ void GridRenderer::init()
     createIndexBuffer();
     createGraphicsPipeline();
     createComputePipeline();
+    createMembraneBuffers();
 
     // Now that the compute descriptor set exists, write the current vertex buffer into it.
     ensureComputeDescriptors();
+}
+
+// Allocates the two ping-pong membrane buffers (one (height, velocity) pair per
+// grid vertex) and zeroes them so the sheet starts flat and at rest. The grid
+// resolution is fixed, so this runs once and the buffers are never recreated.
+void GridRenderer::createMembraneBuffers()
+{
+    const vk::DeviceSize vertexCount =
+        static_cast<vk::DeviceSize>(m_GridSize + 1) * static_cast<vk::DeviceSize>(m_GridSize + 1);
+    const vk::DeviceSize bufferSize = vertexCount * 2u * sizeof(float);
+
+    for ( auto& buffer : m_MembraneBuffer )
+        buffer = makeBuffer(bufferSize,
+                            vk::BufferUsageFlagBits::eStorageBuffer |
+                            vk::BufferUsageFlagBits::eTransferDst,
+                            vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    const vk::CommandBuffer cmd = beginSingleTimeCommands();
+    for ( auto& buffer : m_MembraneBuffer )
+        cmd.fillBuffer(buffer.handle(), 0, bufferSize, 0u);
+    endSingleTimeCommands(cmd);
+
+    m_MembraneRead = 0;
 }
 
 void GridRenderer::generateGrid()
@@ -285,13 +311,6 @@ void GridRenderer::createVertexBuffer()
 
     copyBuffer(staging.handle(), m_VertexBuffer.handle(), bufferSize);
     // `staging` frees itself at end of scope.
-
-    // Delta buffer for the (currently disabled) recentering pass — one float
-    // per vertex. Grow only when the vertex count increases.
-    const vk::DeviceSize deltaSize = m_Vertices.size() * sizeof(float);
-    if ( !m_DeltaBuffer.valid() || m_DeltaBuffer.size() < deltaSize )
-        m_DeltaBuffer = makeBuffer(deltaSize, vk::BufferUsageFlagBits::eStorageBuffer,
-                                   vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     // NOTE: We no longer write the vertex descriptor here because m_ComputeDescriptorSet
     // may not exist yet (createVertexBuffer is called before createComputePipeline in init()).
@@ -433,6 +452,32 @@ void GridRenderer::ensureComputeDescriptors()
 
         m_Device.updateDescriptorSets(write, {});
     }
+
+    // Bindings 2 / 3 - membrane state, ping-ponged. The compute shader reads
+    // m_MembraneRead and writes the other; recordComputeWork() swaps the index
+    // afterwards, so these are rewritten every frame.
+    if (m_MembraneBuffer[0].valid() && m_MembraneBuffer[1].valid())
+    {
+        const int readIdx  = m_MembraneRead;
+        const int writeIdx = 1 - m_MembraneRead;
+
+        vk::DescriptorBufferInfo readInfo{};
+        readInfo.setBuffer(m_MembraneBuffer[readIdx].handle())
+                .setOffset(0).setRange(VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo writeInfo{};
+        writeInfo.setBuffer(m_MembraneBuffer[writeIdx].handle())
+                 .setOffset(0).setRange(VK_WHOLE_SIZE);
+
+        std::array<vk::WriteDescriptorSet, 2> writes{};
+        writes[0].setDstSet(m_ComputeDescriptorSet).setDstBinding(2)
+                 .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                 .setDescriptorCount(1).setPBufferInfo(&readInfo);
+        writes[1].setDstSet(m_ComputeDescriptorSet).setDstBinding(3)
+                 .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                 .setDescriptorCount(1).setPBufferInfo(&writeInfo);
+
+        m_Device.updateDescriptorSets(writes, {});
+    }
 }
 
 void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
@@ -472,6 +517,10 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
         float   radialInfluence;
         float   recenterOffset;
         int32_t geometryType;   // 0=Flat, 1=Spherical, 2=Hyperbolic
+        int32_t membraneEnabled;
+        float   membraneStiffness;
+        float   membraneWaveSpeed;
+        float   membraneDamping;
     };
 
     PushConstants pc{};
@@ -483,6 +532,10 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
     pc.softeningLength = m_Warp.softening;
     pc.radialInfluence = m_Warp.radialInfluence;
     pc.recenterOffset  = m_RecenterOffset;
+    pc.membraneEnabled   = m_Warp.membraneEnabled ? 1 : 0;
+    pc.membraneStiffness = m_Warp.membraneStiffness;
+    pc.membraneWaveSpeed = m_Warp.membraneWaveSpeed;
+    pc.membraneDamping   = m_Warp.membraneDamping;
 
     // Map our enum to the shader's expected values
     switch (m_CurrentGeometryType)
@@ -496,24 +549,30 @@ void GridRenderer::recordComputeWork(vk::CommandBuffer commandBuffer)
                                 vk::ShaderStageFlagBits::eCompute,
                                 0, sizeof(pc), &pc);
 
-    // Dispatch — 32x32 local workgroup size as declared in the shader
-    uint32_t groupsX = (m_GridSize + 31) / 32;
-    uint32_t groupsY = (m_GridSize + 31) / 32;
+    // Dispatch — 32x32 local workgroup size. The grid has (gridSize + 1)
+    // vertices per row, so cover gridSize+1; the shader bounds-checks the rest.
+    uint32_t groupsX = (m_GridSize + 1 + 31) / 32;
+    uint32_t groupsY = (m_GridSize + 1 + 31) / 32;
     commandBuffer.dispatch(groupsX, groupsY, 1);
 
-    // Barrier: compute writes to the vertex buffer must be visible to vertex input
+    // Barrier: the compute writes must be visible to (a) vertex input, for the
+    // draw of the warped grid, and (b) next frame's compute, which reads the
+    // membrane buffer it just wrote (ping-pong).
     vk::MemoryBarrier barrier{};
     barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
-           .setDstAccessMask(vk::AccessFlagBits::eVertexAttributeRead);
+           .setDstAccessMask(vk::AccessFlagBits::eVertexAttributeRead |
+                             vk::AccessFlagBits::eShaderRead);
 
     commandBuffer.pipelineBarrier(
         vk::PipelineStageFlagBits::eComputeShader,
-        vk::PipelineStageFlagBits::eVertexInput,
+        vk::PipelineStageFlagBits::eVertexInput | vk::PipelineStageFlagBits::eComputeShader,
         {},
         barrier, {}, {}
     );
 
-    // (Recenter dispatch disabled for now — will re-add cleanly later)
+    // Swap the membrane buffers: the state just written becomes next frame's
+    // read source. The single in-flight frame + fence wait orders the access.
+    m_MembraneRead = 1 - m_MembraneRead;
 }
 
 void GridRenderer::createIndexBuffer()
@@ -740,14 +799,22 @@ void GridRenderer::createComputePipeline()
                .setDescriptorCount(1)
                .setStageFlags(vk::ShaderStageFlagBits::eCompute);
 
-    // Binding 2: small reduction buffer for recentering (Spherical/Hyperbolic)
-    vk::DescriptorSetLayoutBinding deltaBinding{};
-    deltaBinding.setBinding(2)
+    // Bindings 2/3: dynamic-membrane state, ping-ponged each frame. Binding 2
+    // is the previous frame's snapshot (read), binding 3 is this frame (write).
+    vk::DescriptorSetLayoutBinding membraneReadBinding{};
+    membraneReadBinding.setBinding(2)
                 .setDescriptorType(vk::DescriptorType::eStorageBuffer)
                 .setDescriptorCount(1)
                 .setStageFlags(vk::ShaderStageFlagBits::eCompute);
 
-    std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { vertexBinding, bodiesBinding, deltaBinding };
+    vk::DescriptorSetLayoutBinding membraneWriteBinding{};
+    membraneWriteBinding.setBinding(3)
+                .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                .setDescriptorCount(1)
+                .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+
+    std::array<vk::DescriptorSetLayoutBinding, 4> bindings =
+        { vertexBinding, bodiesBinding, membraneReadBinding, membraneWriteBinding };
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.setBindingCount(static_cast<uint32_t>(bindings.size()))
@@ -793,7 +860,7 @@ void GridRenderer::createComputePipeline()
 
     // Create descriptor pool + allocate the compute descriptor set
     vk::DescriptorPoolSize poolSize{};
-    poolSize.setType(vk::DescriptorType::eStorageBuffer).setDescriptorCount(4);
+    poolSize.setType(vk::DescriptorType::eStorageBuffer).setDescriptorCount(8);
 
     vk::DescriptorPoolCreateInfo poolCreate{};
     poolCreate.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
@@ -854,6 +921,32 @@ void GridRenderer::updateTrails()
         }
 
         // Add indices for a line strip
+        for ( size_t j = 0; j < positions.size() - 1; ++j )
+        {
+            m_TrailIndices.push_back(vertexOffset + j);
+            m_TrailIndices.push_back(vertexOffset + j + 1);
+        }
+        vertexOffset += static_cast<uint32_t>(positions.size());
+    }
+
+    // Append the null-geodesic (light-ray) paths in a bright light colour. The
+    // trail already holds positions lifted onto the warped surface (done once
+    // per point in Simulation::advanceRays), so this is just a copy.
+    const glm::vec3 rayColor(1.0f, 0.92f, 0.35f);
+    for ( const auto& ray : m_Simulation.rays() )
+    {
+        const auto& positions = ray.trail;
+        if ( positions.size() < 2 )
+            continue;
+
+        for ( const auto& pos : positions )
+        {
+            Vertex vertex{};
+            vertex.position = pos;
+            vertex.color    = rayColor;
+            vertex.normal   = glm::vec3(0.0f, 1.0f, 0.0f);
+            m_TrailVertices.push_back(vertex);
+        }
         for ( size_t j = 0; j < positions.size() - 1; ++j )
         {
             m_TrailIndices.push_back(vertexOffset + j);
@@ -1003,9 +1096,24 @@ void GridRenderer::updateGrid()
 
 void GridRenderer::updateSimulation(float deltaTime)
 {
+    // Hand the simulation the current warp so freshly traced ray points get
+    // lifted onto the warped surface as they are added (cheap), rather than
+    // re-lifting the whole trail history every frame (which tanked the FPS).
+    m_Simulation.setRayWarp(m_Warp, m_RecenterOffset);
+
     // The N-body step runs in the Simulation; the renderer then rebuilds the
     // trail GPU buffers from the updated trail history.
     m_Simulation.step(deltaTime);
+
+    // A merge changed the body set — rebuild the grid + body vertex/index
+    // buffers so the (now fewer, resized) bodies render correctly.
+    if ( m_Simulation.consumeBodiesChanged() )
+    {
+        generateGrid();
+        createVertexBuffer();
+        createIndexBuffer();
+    }
+
     updateTrails();
 }
 
@@ -1030,6 +1138,8 @@ void GridRenderer::renderCameraControls()
 
     // GPU toggle - moved here so it's grouped with the geometry selector
     ImGui::Checkbox("Use GPU Grid", &m_UseGPUGrid);
+    ImGui::SameLine();
+    ImGui::Checkbox("Body Merging", &m_Simulation.mergeEnabled());
 
     // Camera controls
     m_CameraController.renderControls();
@@ -1043,9 +1153,49 @@ void GridRenderer::renderCameraControls()
     ImGui::DragFloat("Warp Gain", &m_Warp.warpGain, 0.005f, 0.01f, 2.0f, "%.3f");
     ImGui::DragFloat("Radial Influence", &m_Warp.radialInfluence, 0.005f, 0.0f, 1.0f, "%.3f");
 
-    ImGui::Text("Kinetic Energy: %.3f", m_Simulation.kineticEnergy());
-    ImGui::Text("Potential Energy: %.3f", m_Simulation.potentialEnergy());
-    ImGui::Text("Total Energy: %.3f", m_Simulation.totalEnergy());
+    // Dynamic-membrane (rippling grid) tuning — GPU path only.
+    ImGui::Checkbox("Membrane Ripples", &m_Warp.membraneEnabled);
+    if ( m_Warp.membraneEnabled )
+    {
+        ImGui::DragFloat("Membrane Stiffness", &m_Warp.membraneStiffness, 0.005f, 0.0f, 0.5f, "%.3f");
+        ImGui::DragFloat("Wave Speed", &m_Warp.membraneWaveSpeed, 0.005f, 0.0f, 0.49f, "%.3f");
+        ImGui::DragFloat("Membrane Damping", &m_Warp.membraneDamping, 0.005f, 0.0f, 0.3f, "%.3f");
+    }
+
+    // Null-geodesic (light-ray) demo. Emit a fan of rays, then toggle Lensing:
+    // off = pure manifold geodesics (curvature deviation), on = light bending.
+    ImGui::Separator();
+    if ( ImGui::Button("Emit Rays") )
+        m_Simulation.emitRays();
+    ImGui::SameLine();
+    if ( ImGui::Button("Clear Rays") )
+        m_Simulation.clearRays();
+    ImGui::SameLine();
+    ImGui::Checkbox("Lensing", &m_Simulation.lensingEnabled());
+    ImGui::SliderInt("Ray Count", &m_Simulation.rayCount(), 3, 41);
+    ImGui::DragFloat("Ray Speed", &m_Simulation.raySpeed(), 1.0f, 1.0f, 200.0f, "%.0f");
+    if ( m_Simulation.lensingEnabled() )
+        ImGui::DragFloat("Lens Strength", &m_Simulation.rayLensStrength(), 0.005f, 0.0f, 1.0f, "%.3f");
+    ImGui::Separator();
+
+    // Conserved-quantity diagnostics: rolling plots of total energy and total
+    // angular momentum. A good (symplectic) integrator keeps these ~flat.
+    m_EnergyHistory[m_HistoryHead] = m_Simulation.totalEnergy();
+    m_AngMomHistory[m_HistoryHead] = m_Simulation.angularMomentum();
+    m_HistoryHead = (m_HistoryHead + 1) % kHistorySize;
+
+    ImGui::Text("KE %.0f   PE %.0f", m_Simulation.kineticEnergy(),
+                                     m_Simulation.potentialEnergy());
+
+    char energyLabel[32];
+    std::snprintf(energyLabel, sizeof(energyLabel), "%.0f", m_Simulation.totalEnergy());
+    ImGui::PlotLines("Total Energy", m_EnergyHistory.data(), kHistorySize, m_HistoryHead,
+                     energyLabel, FLT_MAX, FLT_MAX, ImVec2(0.0f, 48.0f));
+
+    char angLabel[32];
+    std::snprintf(angLabel, sizeof(angLabel), "%.0f", m_Simulation.angularMomentum());
+    ImGui::PlotLines("Ang. Momentum", m_AngMomHistory.data(), kHistorySize, m_HistoryHead,
+                     angLabel, FLT_MAX, FLT_MAX, ImVec2(0.0f, 48.0f));
 
     if ( ImGui::Button("Reset Camera") )
         m_CameraController.reset(m_CurrentGeometryType == GeometryType::Spherical, m_GridScale);

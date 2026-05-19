@@ -25,6 +25,12 @@ enum class GeometryType { Flat, Spherical, Hyperbolic };
 // rather than a narrow cone. A smooth edge taper fades the warp to zero at the
 // grid boundary; Spherical/Hyperbolic also subtract a re-centering offset (the
 // mean warp depth) so the manifold does not drift under a global potential bias.
+//
+// On the GPU path the warp also drives a *dynamic membrane*: rather than the
+// grid snapping to the well shape, each vertex carries a height + velocity and
+// integrates a damped wave equation that chases the well shape as a forcing
+// term — so moving bodies and merges radiate ripples across the sheet. The CPU
+// fallback keeps the instant (static) warp.
 // =============================================================================
 
 // Tunable parameters for the grid-warp visualisation.
@@ -34,6 +40,14 @@ struct WarpParams
     float warpGain        = 0.115f;  // how quickly depth saturates with mass
     float softening       = 1.0f;    // avoids a singular 1/d at a body's centre
     float radialInfluence = 0.045f;  // couples well width to mass (0 = uniform width)
+
+    // Dynamic-membrane dials (GPU path only). The grid integrates
+    //   accel = stiffness*(wellShape - h) + waveSpeed*laplacian(h) - damping*v
+    // once per frame, in per-step units (no separate dt).
+    bool  membraneEnabled   = true;  // false = instant warp (the old behaviour)
+    float membraneStiffness = 0.10f; // spring pull toward the well shape
+    float membraneWaveSpeed = 0.25f; // ripple propagation (CFL-stable below 0.5)
+    float membraneDamping   = 0.06f; // bleeds energy so ripples settle
 };
 
 class Geometry
@@ -79,6 +93,12 @@ public:
                           const WarpParams& warp,
                           float recenterOffset) = 0;
 
+    /// Displaces a single base-surface point onto the warped surface, given its
+    /// raw warp depth (from warpDepth()). The per-geometry displacement model —
+    /// warpGrid() and the light-ray lift both go through this.
+    virtual glm::vec3 warpedPosition(const glm::vec3& basePos, float rawDepth,
+                                     float recenterOffset) const = 0;
+
     void setGridParams(int grid_size, float grid_scale)
     {
         // Only invalidate the cached base grid when the parameters actually
@@ -102,6 +122,7 @@ public:
     float computeDistance(const glm::vec3& pos1, const glm::vec3& pos2) const override;
     void updatePosition(Object& obj, float deltaTime, float radius, bool apply_verlet_half) const override;
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
+    glm::vec3 warpedPosition(const glm::vec3& basePos, float rawDepth, float recenterOffset) const override;
 };
 
 class SphericalGeometry : public Geometry
@@ -116,6 +137,7 @@ public:
     // The sphere is a closed surface — no edges to taper.
     float edgeFade(const glm::vec3& basePos) const override { return 1.0f; }
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
+    glm::vec3 warpedPosition(const glm::vec3& basePos, float rawDepth, float recenterOffset) const override;
 };
 
 class HyperbolicGeometry : public Geometry
@@ -132,6 +154,7 @@ public:
                     const std::vector<std::shared_ptr<Shape>>& bodies,
                     const WarpParams& warp) const override;
     void warpGrid(std::vector<Vertex>& vertices, const std::vector<std::shared_ptr<Shape>>& bodies, const WarpParams& warp, float recenterOffset) override;
+    glm::vec3 warpedPosition(const glm::vec3& basePos, float rawDepth, float recenterOffset) const override;
 };
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale);

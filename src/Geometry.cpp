@@ -18,12 +18,22 @@ namespace
     // exponent hard-coded in flat_grid.comp.
     constexpr float kMassExponent = 0.4f;
 
-    // Heat-map colour for the warp: white where the grid is flat, fading to a
-    // dark blue at full well depth. Must match the gradient in flat_grid.comp.
+    // Heat-map colour for the warp: a multi-stop white -> sky -> blue -> navy
+    // ramp. The depth is sqrt-boosted so even the shallow warp picks up colour
+    // and the gradient reads across the grid. Must match flat_grid.comp.
     glm::vec3 depthColor(float depth, float wellDepth)
     {
-        const float t = glm::clamp(depth / std::max(wellDepth, 1e-3f), 0.0f, 1.0f);
-        return glm::mix(glm::vec3(1.0f), glm::vec3(0.15f, 0.30f, 0.65f), t);
+        float t = glm::clamp(depth / std::max(wellDepth, 1e-3f), 0.0f, 1.0f);
+        t = std::sqrt(t);
+
+        const glm::vec3 c0(1.00f, 1.00f, 1.00f);  // flat      — white
+        const glm::vec3 c1(0.53f, 0.78f, 0.96f);  // shallow   — sky blue
+        const glm::vec3 c2(0.15f, 0.40f, 0.82f);  // mid       — blue
+        const glm::vec3 c3(0.03f, 0.09f, 0.34f);  // deep well — navy
+
+        if ( t < 0.333f )      return glm::mix(c0, c1, t / 0.333f);
+        else if ( t < 0.667f ) return glm::mix(c1, c2, (t - 0.333f) / 0.334f);
+        else                   return glm::mix(c2, c3, (t - 0.667f) / 0.333f);
     }
 }
 
@@ -168,12 +178,19 @@ void FlatGeometry::warpGrid(
         Vertex vertex = base[v];
         const float rawDepth = warpDepth(vertex.position, bodies, warp);
 
-        vertex.position.y -= rawDepth - recenterOffset;   // wells dip downward
+        vertex.position = warpedPosition(vertex.position, rawDepth, recenterOffset);
         vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
         vertex.color = depthColor(rawDepth, warp.wellDepth);
 
         vertices[v] = vertex;
     }
+}
+
+glm::vec3 FlatGeometry::warpedPosition(const glm::vec3& basePos, float rawDepth,
+                                       float recenterOffset) const
+{
+    // Wells dip straight down.
+    return glm::vec3(basePos.x, basePos.y - (rawDepth - recenterOffset), basePos.z);
 }
 
 void SphericalGeometry::generateGrid(
@@ -329,7 +346,6 @@ void SphericalGeometry::warpGrid(
     float recenterOffset)
 {
     const std::vector<Vertex>& base = baseGrid();
-    const float R = m_GridScale / 2.0f; // base sphere radius
 
 #pragma omp parallel for
     for ( size_t v = 0; v < base.size(); ++v )
@@ -342,13 +358,22 @@ void SphericalGeometry::warpGrid(
         const float rawDepth = warpDepth(vertex.position, bodies, warp);
 
         const glm::vec3 radialDir = glm::normalize(vertex.position);
-        const float newRadius = std::max(R - (rawDepth - recenterOffset), 0.3f * R);
-        vertex.position = radialDir * newRadius;
+        vertex.position = warpedPosition(vertex.position, rawDepth, recenterOffset);
         vertex.normal = radialDir;
         vertex.color = depthColor(rawDepth, warp.wellDepth);
 
         vertices[v] = vertex;
     }
+}
+
+glm::vec3 SphericalGeometry::warpedPosition(const glm::vec3& basePos, float rawDepth,
+                                            float recenterOffset) const
+{
+    // Wells dimple the sphere inward (clamped so it never collapses past 0.3R).
+    const float R = m_GridScale / 2.0f;
+    const glm::vec3 radialDir = glm::normalize(basePos);
+    const float newRadius = std::max(R - (rawDepth - recenterOffset), 0.3f * R);
+    return radialDir * newRadius;
 }
 
 void HyperbolicGeometry::generateGrid(
@@ -489,12 +514,22 @@ void HyperbolicGeometry::warpGrid(
         const float x = vertex.position.x;
         const float z = vertex.position.z;
         const glm::vec3 surfaceNormal = glm::normalize(glm::vec3(-2.0f * x / k, 1.0f, 2.0f * z / k));
-        vertex.position -= (rawDepth - recenterOffset) * surfaceNormal;
+        vertex.position = warpedPosition(vertex.position, rawDepth, recenterOffset);
         vertex.normal = surfaceNormal;
         vertex.color = depthColor(rawDepth, warp.wellDepth);
 
         vertices[v] = vertex;
     }
+}
+
+glm::vec3 HyperbolicGeometry::warpedPosition(const glm::vec3& basePos, float rawDepth,
+                                             float recenterOffset) const
+{
+    // Displace along the paraboloid's surface normal.
+    const float k = m_GridScale;
+    const glm::vec3 surfaceNormal =
+        glm::normalize(glm::vec3(-2.0f * basePos.x / k, 1.0f, 2.0f * basePos.z / k));
+    return basePos - (rawDepth - recenterOffset) * surfaceNormal;
 }
 
 std::shared_ptr<Geometry> geometryFactory(GeometryType type, int grid_size, float grid_scale)

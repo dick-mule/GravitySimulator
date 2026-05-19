@@ -1,6 +1,6 @@
 # GravitySimulator
 
-A real-time, GPU-accelerated gravity simulator featuring a deformable visualization grid rendered with Vulkan. The project demonstrates high-performance compute shaders, physically faithful gravitational warping across multiple geometries, and a clean comparison between GPU and multi-threaded CPU implementations.
+A real-time, GPU-accelerated gravity simulator featuring a deformable visualization grid rendered with Vulkan. The project demonstrates high-performance compute shaders, physically faithful gravitational warping across multiple geometries, a rippling elastic-membrane grid, traced null geodesics (light rays), and a clean comparison between GPU and multi-threaded CPU implementations.
 
 ## Features
 
@@ -14,6 +14,19 @@ A real-time, GPU-accelerated gravity simulator featuring a deformable visualizat
   - Bodies are uploaded to the GPU each frame via storage buffers
   - Full pipeline barriers and descriptor management for safe, high-performance execution
 
+- **Dynamic Membrane (Rippling Grid)**
+  - The grid is an elastic sheet: every vertex carries a height + velocity and integrates a damped wave equation on the GPU, with the gravitational-well shape as the forcing term
+  - Moving bodies and merges radiate ripples across the surface — the rubber-sheet analogy made literal
+  - Ping-pong storage buffers keep the wave Laplacian race-free; live-tunable stiffness, wave speed, and damping
+
+- **Depth Heat-Map Coloring**
+  - The grid is colored by warp depth — a multi-stop white → sky → blue → navy gradient — so well depth (and the membrane ripples) read at a glance
+
+- **Null Geodesics (Light Rays)**
+  - Trace a fan of massless rays along the geodesics of the active manifold
+  - **Lensing on** — rays are deflected by the masses (light-bending); **off** — pure geodesics, so a parallel fan reveals the manifold's curvature (geodesic deviation: parallel on Flat, converging on Spherical, diverging on Hyperbolic)
+  - Speed is renormalized each step, so the path stays a constant-speed (null) geodesic; rays ride the warped surface so each deflection's cause is visible
+
 - **High-Performance CPU Fallback**
   - OpenMP-parallelized warping on all three geometries
   - OpenMP-parallelized N-body Verlet integration for the underlying massive body simulation
@@ -23,11 +36,13 @@ A real-time, GPU-accelerated gravity simulator featuring a deformable visualizat
   - 41 massive bodies (1 dominant central mass + 40 orbiting bodies with randomized masses)
   - Velocity Verlet integration with geometry-aware distance and force calculations
   - Stable circular orbits with proper initial conditions for each geometry
+  - Optional inelastic merging — bodies that touch coalesce, conserving mass and momentum (accretion)
 
 - **Scientific Visualization UI**
   - Clean, dark-themed interface with live performance metrics
   - Real-time switching between geometries and GPU/CPU rendering modes
   - Camera controls, simulation parameters, and diagnostic information
+  - Live conservation plots — total energy and angular momentum over time, validating the symplectic integrator
 
 ## Performance
 
@@ -61,7 +76,24 @@ The GPU path stays at the display refresh rate even with a dense 800×800 vertex
   - A smooth edge taper fades the warp to zero at the grid boundary (Flat/Hyperbolic), and
     Spherical/Hyperbolic subtract a re-centering offset so the manifold doesn't drift
   - `Well Depth`, `Warp Gain`, and `Radial Influence` are live-tunable from the controls panel
-  - The CPU (`Geometry::warpGrid`) and GPU (`flat_grid.comp`) paths share the identical model
+  - The CPU (`Geometry::warpGrid`) and GPU (`flat_grid.comp`) paths share the identical model;
+    `Geometry::warpedPosition` is the single source of truth for the per-geometry displacement
+
+- **Dynamic Membrane**
+  - The GPU path integrates a damped wave equation per grid vertex each frame:
+    `accel = stiffness·(wellShape − h) + waveSpeed·∇²h − damping·v`, in per-step units
+  - The well shape is the forcing term, so the grid chases it with inertia and radiates ripples
+  - Two ping-pong storage buffers (read previous frame / write current) keep the 4-neighbour
+    Laplacian race-free; the buffers are zero-initialized once and never recreated
+  - `Wave Speed` is capped just below the CFL stability limit (0.5) so the explicit scheme stays stable
+
+- **Null Geodesics**
+  - A light ray is a massless tracer integrated along the manifold geodesic — straight lines on
+    Flat, exact great-circle rotation on Spherical, constrained-particle steps on Hyperbolic
+  - With lensing enabled it also feels a `∝ mass/dist²` deflection; speed is renormalized each
+    step so it bends without speeding up — a true null geodesic
+  - Each traced point is lifted onto the warped surface **once**, when added, so a dense fan of
+    rays costs only one lift per ray per frame rather than re-lifting the whole trail history
 
 - **Robust Development Practices**
   - Early development used strict safety gates (`m_UseGPUGrid`) after an initial GPU hang caused by out-of-bounds writes in the compute shader
@@ -77,9 +109,12 @@ The GPU path stays at the display refresh rate even with a dense 800×800 vertex
 src/
 ├── main.cpp          # Entry point — constructs and runs VulkanApp
 ├── VulkanApp.*       # Vulkan instance/device/swapchain/render pass, window + input, frame loop
-├── GridRenderer.*    # Grid buffers & pipelines, GPU compute dispatch, N-body simulation, UI panel
+├── GridRenderer.*    # Grid buffers & pipelines, GPU compute dispatch, membrane buffers, UI panel
+├── Simulation.*      # N-body Verlet integration, body merging, conserved quantities, light rays
 ├── Geometry.*        # Flat / Spherical / Hyperbolic surfaces: grid generation, CPU warping,
-│                     #   Verlet integration, and coordinate/velocity conversion between geometries
+│                     #   the warp/displacement model, and coordinate/velocity conversion
+├── CameraController.* # Orbit camera: input, view/projection, controls UI
+├── VulkanBuffer.*    # RAII wrapper for a Vulkan buffer + its device memory
 ├── Types.*           # Shared POD types: Vertex, Object, Camera, PushConstants, Shape/Cube/Sphere
 ├── ImGuiHandler.*    # Dear ImGui lifecycle and per-frame UI hooks
 ├── shaders/          # GLSL: grid.vert/frag + per-geometry compute warping shaders
@@ -104,7 +139,8 @@ should produce visually matching results.
 ### Per-frame flow (`VulkanApp::mainLoop` → `drawFrame`)
 
 1. `updateCamera` — apply mouse/keyboard input to the orbit camera.
-2. `updateSimulation` — advance the N-body system one Verlet step (CPU/OpenMP).
+2. `updateSimulation` — advance the N-body system one Verlet step (CPU/OpenMP), apply
+   merges, then advance any traced light rays one geodesic step.
 3. If GPU mode: `updateBodiesBuffer` uploads body positions/masses to an SSBO.
 4. `updateGrid` — CPU mode warps + re-uploads the vertex buffer; GPU mode is a no-op here.
 5. `recordComputeWork` — GPU mode dispatches the warping compute shader into the frame's
@@ -115,8 +151,11 @@ should produce visually matching results.
 
 - **Geometry Selector**: Switch between Flat, Spherical, and Hyperbolic in real time
 - **Use GPU Grid**: Toggle between the high-performance compute shader path and the parallel CPU implementation
-- **Camera Controls**: Orbit, zoom, pan, and adjust FOV
+- **Body Merging**: Toggle inelastic merging (accretion) of bodies that collide
+- **Camera Controls**: Orbit, zoom, pan, and adjust FOV (near/far planes auto-fit the scene)
 - **Simulation Parameters**: Gravity strength, time step, orbit speed factor, etc.
+- **Warp & Membrane**: Well depth, warp gain, radial influence, and the membrane's stiffness / wave speed / damping
+- **Light Rays**: Emit / clear a ray fan, toggle lensing, and tune ray count, speed, and lens strength
 
 ## Building
 
@@ -171,7 +210,8 @@ aren't forgotten (see the in-repo review notes for detail):
 
 ## Future Directions
 
-- Larger particle counts and more sophisticated accretion disk models
+- Larger particle counts and a dedicated accretion-disk preset (merging already models coalescence)
+- A CPU-path dynamic membrane to match the GPU rippling grid
 - Improved lighting and shading on the deformed grid
 - Export of simulation data for analysis
 - Further optimization of the CPU path and exploration of GPU-accelerated N-body integration

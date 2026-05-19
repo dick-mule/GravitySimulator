@@ -5,6 +5,7 @@
 #pragma once
 
 #include <vulkan/vulkan.hpp>
+#include <array>
 #include <vector>
 #include <memory>
 
@@ -67,6 +68,12 @@ private:
     WarpParams m_Warp;
     float m_RecenterOffset = 0.0f;  // mean warp depth, recomputed each frame
 
+    // Rolling history for the conserved-quantity plots in the controls panel.
+    static constexpr int kHistorySize = 180;
+    std::array<float, kHistorySize> m_EnergyHistory{};
+    std::array<float, kHistorySize> m_AngMomHistory{};
+    int m_HistoryHead = 0;
+
     // The CPU N-body simulation — owned by VulkanApp and referenced here, so
     // it outlives this renderer across swapchain recreation (window resize).
     Simulation& m_Simulation;
@@ -80,9 +87,13 @@ private:
 
     glm::vec3 m_CenterOfMass = glm::vec3(0.0f);  // computed when GPU mode is active
 
-    // Per-vertex delta buffer reserved for the (currently disabled) recentering
-    // pass that removes global bias after Spherical/Hyperbolic warping.
-    VulkanBuffer m_DeltaBuffer;
+    // Dynamic-membrane state: one (height, velocity) per grid vertex. Two
+    // buffers are ping-ponged so the wave Laplacian reads a consistent
+    // snapshot — m_MembraneRead indexes the buffer the compute shader reads;
+    // it writes the other, then recordComputeWork() swaps the index.
+    VulkanBuffer m_MembraneBuffer[2];
+    int m_MembraneRead = 0;
+    void createMembraneBuffers();   // allocates + zeroes both membrane buffers
 
     std::shared_ptr<Geometry> m_Geometry;
     GeometryType m_CurrentGeometryType;
