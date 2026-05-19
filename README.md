@@ -136,16 +136,101 @@ The simulation is split into two layers:
 surface. The compute shaders are a hand-port of the CPU `warpGrid` math, so the two paths
 should produce visually matching results.
 
-### Per-frame flow (`VulkanApp::mainLoop` → `drawFrame`)
+## Rendering Pipeline & Frame Sequencing
 
-1. `updateCamera` — apply mouse/keyboard input to the orbit camera.
-2. `updateSimulation` — advance the N-body system one Verlet step (CPU/OpenMP), apply
-   merges, then advance any traced light rays one geodesic step.
-3. If GPU mode: `updateBodiesBuffer` uploads body positions/masses to an SSBO.
-4. `updateGrid` — CPU mode warps + re-uploads the vertex buffer; GPU mode is a no-op here.
-5. `recordComputeWork` — GPU mode dispatches the warping compute shader into the frame's
-   command buffer, with a compute→vertex-input memory barrier.
-6. `draw` — render the grid, bodies, and motion trails; ImGui draws on top.
+### Initialization order (`VulkanApp::run`)
+
+Setup is ordered around one hard dependency — **a framebuffer's depth attachment comes
+from the renderer, so framebuffers cannot exist until the renderer does**:
+
+1. `initWindow` — GLFW window (no GL context) + input callbacks.
+2. `initVulkan` — instance, surface, physical device, then the **logical device**. The
+   device enables `VK_KHR_swapchain`, and — because macOS/MoltenVK is a portability driver —
+   `VK_KHR_portability_subset` whenever it is advertised, plus the `fillModeNonSolid` feature
+   the wireframe grid's `polygonMode = LINE` requires. Then the swapchain, image views,
+   render pass, command pool, command buffers, and sync objects.
+3. `initGridRenderer` — constructs `GridRenderer`: grid geometry, the graphics and compute
+   pipelines, the ping-pong membrane buffers, and the **per-swapchain-image depth resources**.
+4. `createFramebuffers` — each framebuffer binds attachment 0 = swapchain colour view,
+   attachment 1 = the renderer's depth view. It runs *after* step 3 so the depth view exists;
+   running it earlier bound a colour image into the depth slot (a validation error and a
+   wrong-layout present). `recreateSwapchain` follows the same order on window resize.
+5. `initImGui` — ImGui context, the GLFW + Vulkan backends, and ImGui's **own** descriptor
+   pool (separate from the renderer's compute pool) for its font-atlas texture.
+
+### Per-frame sequence
+
+Each iteration of `VulkanApp::mainLoop` has two halves — **CPU/UI preparation**, then
+`drawFrame`, which owns all GPU work.
+
+**In `mainLoop` (before `drawFrame`):**
+
+1. Compute `deltaTime`, poll GLFW events, service a pending resize.
+2. `ImGuiHandler::newFrame()` — begin the ImGui frame.
+3. `updateCamera` — fold this frame's mouse/keyboard input into the orbit camera.
+4. `renderCameraControls` + `renderUI` — build the ImGui widget tree. This is pure CPU work:
+   it reads/writes the simulation parameters the widgets are bound to and produces an ImGui
+   *draw-data* list. **No Vulkan calls happen here.**
+
+**In `drawFrame(deltaTime)`** — the governing rule is that *nothing which frees or
+rewrites a GPU buffer may run before the in-flight fence is waited*, because with a single
+frame in flight the previous frame's command buffer may still be reading those buffers:
+
+1. `waitForFences` / `resetFences` — block until the previous frame's GPU work has finished.
+2. `updateSimulation` — now safe: one N-body Verlet step, body merges, and one geodesic step
+   per light ray; it also **rebuilds the trail vertex/index buffers** (and, on a merge, the
+   grid buffers). This must run here, after the wait — doing it in `mainLoop` freed buffers a
+   still-executing frame referenced, which lost the device.
+3. `updateBodiesBuffer` — upload body positions/masses to the bodies SSBO (host-visible,
+   written directly — no staging copy).
+4. `updateGrid` — CPU warp path re-uploads the vertex buffer; a no-op on the GPU path.
+5. `acquireNextImageKHR` — obtain the next swapchain image index, signalling
+   `m_ImageAvailableSemaphore`; an out-of-date result triggers `recreateSwapchain`.
+6. Begin recording that image's command buffer.
+7. `recordComputeWork` (GPU path) — bind the compute pipeline and descriptors (ping-ponging
+   the two membrane buffers), push constants, **dispatch the warp + membrane compute shader**
+   over the grid, then a memory barrier so the writes are visible to (a) vertex input for the
+   upcoming draw and (b) next frame's compute read of the membrane buffer.
+8. `beginRenderPass` — clears the colour and depth attachments.
+9. `GridRenderer::draw` — records the scene: the warped grid, the bodies, motion trails, and
+   the light-ray paths.
+10. `ImGuiHandler::renderDrawData` — records the ImGui draw-data list (built back in step 4)
+    into the **same** command buffer, **inside the same render pass**, so the UI composites
+    on top of the scene.
+11. `endRenderPass`, end the command buffer.
+12. `submit` — waits on `m_ImageAvailableSemaphore`, signals `m_RenderFinishedSemaphore`, and
+    signals `m_InFlightFence` when the GPU completes.
+13. `presentKHR` — waits on `m_RenderFinishedSemaphore`, then presents the image.
+
+### Vulkan ↔ ImGui interplay
+
+ImGui is deliberately split into a **build** half and a **record** half:
+
+- The **build** half — `newFrame()` plus every `ImGui::` widget call in
+  `renderCameraControls` / `renderUI` — runs in `mainLoop` and touches only CPU-side ImGui
+  state, emitting a draw-data list. Widgets bind directly to simulation/renderer fields, so
+  the panel both displays and edits live state.
+- The **record** half — `ImGui_ImplVulkan_RenderDrawData` via `renderDrawData` — runs inside
+  `drawFrame`'s render pass and turns that draw-data list into Vulkan draw calls appended to
+  the frame's command buffer.
+
+Because ImGui records into the *same* command buffer and render pass as the scene, the UI is
+simply the last thing drawn — it composites on top with no extra pass or command buffer. The
+ImGui Vulkan backend owns its own descriptor pool for font/texture descriptors; on shutdown
+`ImGui_ImplVulkan_Shutdown()` must run **before** that pool is destroyed (it frees descriptor
+sets from it), and the `ImGuiHandler` destructor is ordered accordingly.
+
+### Synchronization model
+
+- **One frame in flight** — a single `m_InFlightFence` and one
+  `m_ImageAvailableSemaphore` / `m_RenderFinishedSemaphore` pair. Frame N+1 cannot start GPU
+  work until frame N's fence signals; that fence is the linchpin of the "buffer updates only
+  after the wait" rule above.
+- **Within a frame** — a compute→vertex-input memory barrier orders the warp compute's
+  vertex-buffer writes before the draw's vertex fetch.
+- **The membrane** ping-pongs two storage buffers: frame N writes buffer B while reading
+  buffer A. The barrier (extended to also cover `eShaderRead` by the compute stage) plus the
+  per-frame fence make B's writes visible to frame N+1, which then reads B and writes A.
 
 ## Controls
 

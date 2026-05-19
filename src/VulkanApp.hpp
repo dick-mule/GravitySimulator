@@ -97,7 +97,7 @@ private:
     void endSingleTimeCommands(const vk::CommandBuffer& commandBuffer) const;
 
     void mainLoop();
-    void drawFrame();
+    void drawFrame(float deltaTime);
 
     void cleanup();
 

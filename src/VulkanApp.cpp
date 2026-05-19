@@ -7,6 +7,7 @@
 #include "GridRenderer.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <cstring>
 
 VulkanApp::VulkanApp()
     : m_Window(nullptr)
@@ -24,7 +25,8 @@ void VulkanApp::run()
 {
     initWindow();
     initVulkan();
-    initGridRenderer();
+    initGridRenderer();    // creates the depth resources
+    createFramebuffers();  // ...which the framebuffer depth attachment needs
     initImGui();
     mainLoop();
 }
@@ -103,10 +105,12 @@ void VulkanApp::initVulkan()
     createSwapchain();
     createImageViews();
     createRenderPass();
-    createFramebuffers();
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
+    // createFramebuffers() is intentionally deferred: the framebuffer's depth
+    // attachment comes from GridRenderer's depth resources, which don't exist
+    // until initGridRenderer(). run() calls createFramebuffers() after that.
 }
 
 void VulkanApp::createInstance()
@@ -215,16 +219,32 @@ void VulkanApp::createLogicalDevice()
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
+    // Only enable features/extensions the physical device actually advertises.
+    const auto availableExtensions = m_PhysicalDevice.enumerateDeviceExtensionProperties();
+    const auto deviceHasExtension = [&](const char* name)
+    {
+        for ( const auto& ext : availableExtensions )
+            if ( std::strcmp(ext.extensionName, name) == 0 )
+                return true;
+        return false;
+    };
+
+    // The wireframe grid is drawn with polygonMode = LINE, which requires the
+    // fillModeNonSolid device feature.
+    const vk::PhysicalDeviceFeatures supportedFeatures = m_PhysicalDevice.getFeatures();
     vk::PhysicalDeviceFeatures deviceFeatures{};
+    deviceFeatures.setFillModeNonSolid(supportedFeatures.fillModeNonSolid);
+
+    std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    // On macOS / MoltenVK this is a portability driver: the spec requires
+    // VK_KHR_portability_subset to be enabled whenever the device exposes it.
+    if ( deviceHasExtension("VK_KHR_portability_subset") )
+        deviceExtensions.push_back("VK_KHR_portability_subset");
 
     vk::DeviceCreateInfo createInfo{};
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    };
     createInfo.setQueueCreateInfoCount(static_cast<uint32_t>(queueCreateInfos.size()))
               .setPQueueCreateInfos(queueCreateInfos.data())
               .setPEnabledFeatures(&deviceFeatures)
-              .setEnabledExtensionCount(1)
               .setPEnabledExtensionNames(deviceExtensions)
               .setEnabledLayerCount(0);
 
@@ -446,7 +466,9 @@ void VulkanApp::createCommandPool()
 
 void VulkanApp::createCommandBuffers()
 {
-    m_CommandBuffers.resize(m_SwapchainFramebuffers.size());
+    // One command buffer per swapchain image. Sized from the image count (not
+    // the framebuffers) so this need not wait for createFramebuffers().
+    m_CommandBuffers.resize(m_SwapchainImages.size());
 
     vk::CommandBufferAllocateInfo allocInfo{};
     allocInfo.setCommandPool(m_CommandPool)
@@ -556,29 +578,33 @@ void VulkanApp::mainLoop()
 
         m_ImGuiHandler->newFrame();
         m_GridRenderer->updateCamera();
-        m_GridRenderer->updateSimulation(deltaTime);     // CPU N-body step
         m_GridRenderer->renderCameraControls();
         m_ImGuiHandler->renderUI(m_GridRenderer.get());
 
-        // The GPU-buffer updates (bodies SSBO, vertex buffer) happen inside
-        // drawFrame(), after the in-flight fence wait — see drawFrame().
-        drawFrame();
+        // The N-body step and every GPU-buffer update happen inside drawFrame(),
+        // after the in-flight fence wait — so buffers that a still-executing
+        // frame may reference are never freed or rewritten early.
+        drawFrame(deltaTime);
     }
 
     m_Device.waitIdle();
 }
 
-void VulkanApp::drawFrame()
+void VulkanApp::drawFrame(float deltaTime)
 {
     // Wait for the previous frame's GPU work to finish before touching any
     // buffer it might still be reading.
     auto _ = m_Device.waitForFences(m_InFlightFence, VK_TRUE, UINT64_MAX);
     m_Device.resetFences(m_InFlightFence);
 
-    // Safe now: refresh the data the upcoming frame will read. The bodies SSBO
-    // is host-visible and written directly here (no staging copy / queue
-    // stall); updateGrid() re-uploads the vertex buffer on the CPU warp path
-    // and is a no-op when the GPU compute path owns the grid.
+    // Safe now (previous frame done): advance the N-body simulation and refresh
+    // the data the upcoming frame will read. updateSimulation() rebuilds the
+    // trail buffers (and, on a merge, the grid buffers), so it MUST run here,
+    // after the fence wait — running it in mainLoop freed buffers a still-
+    // executing frame referenced, which lost the device. The bodies SSBO is
+    // host-visible and written directly; updateGrid() re-uploads the vertex
+    // buffer on the CPU warp path and is a no-op on the GPU compute path.
+    m_GridRenderer->updateSimulation(deltaTime);
     if ( m_GridRenderer->getUseGPUGrid() )
         m_GridRenderer->updateBodiesBuffer();
     m_GridRenderer->updateGrid();

@@ -33,10 +33,12 @@ ImGuiHandler::ImGuiHandler(
 
 ImGuiHandler::~ImGuiHandler()
 {
-    m_Device.destroyDescriptorPool(m_DescriptorPool);
+    // ImGui_ImplVulkan_Shutdown() frees the descriptor sets it allocated from
+    // m_DescriptorPool, so it must run BEFORE the pool itself is destroyed.
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    m_Device.destroyDescriptorPool(m_DescriptorPool);
 }
 
 void ImGuiHandler::init()
