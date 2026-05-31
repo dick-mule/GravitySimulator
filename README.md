@@ -109,8 +109,15 @@ The GPU path stays at the display refresh rate even with a dense 800×800 vertex
   - Comprehensive bounds checking, descriptor validation, and debug logging during bring-up
 
 - **Cross-Platform**
-  - Primary development on macOS (MoltenVK)
-  - Designed for easy portability to Windows and Linux via Vulkan
+  - Runs on macOS (via MoltenVK), Windows, and Linux from a single Vulkan code path
+  - Instance creation **feature-detects** the portability extensions MoltenVK needs
+    (`VK_KHR_portability_enumeration` / `VK_KHR_portability_subset`) and skips them on
+    native drivers — the same logic boots on a Mac and on a native NVIDIA/AMD driver
+  - Device selection prefers a **discrete GPU** (and logs the choice), so laptops with
+    switchable graphics don't silently run the sim on a weak integrated GPU
+  - MSVC-specific portability: signed loop indices for MSVC's OpenMP 2.0, and
+    `<windows.h>` macro hygiene (`NOMINMAX`, `#undef MemoryBarrier`) so the Windows
+    headers don't clobber `std::max` / `vk::MemoryBarrier`
 
 ## Project Structure
 
@@ -255,14 +262,14 @@ sets from it), and the `ImGuiHandler` destructor is ordered accordingly.
 
 ### Requirements
 
-- C++23 compiler (the code uses `std::print` and other C++23 features; `CMAKE_CXX_STANDARD` is set to 23)
-- Vulkan SDK
-- GLFW
-- GLM
-- Dear ImGui (included in `src/imgui/`)
-- OpenMP (libomp on macOS via Homebrew recommended)
+- C++23 compiler (the code uses `std::print` and other C++23 features; `CMAKE_CXX_STANDARD` is 23) —
+  Apple Clang, GCC, or MSVC 19.4x+ (Visual Studio 2022 17.10+)
+- Vulkan SDK (LunarG on Windows/Linux; on macOS this provides MoltenVK + `glslc`)
+- GLFW and GLM
+- Dear ImGui (vendored in `src/imgui/`)
+- OpenMP (libomp on macOS via Homebrew; built into MSVC and GCC)
 
-### Build Steps
+### macOS / Linux
 
 ```bash
 git clone <repo-url>
@@ -272,11 +279,73 @@ cmake ..
 make -j
 ```
 
-On macOS, you may need to explicitly link against Homebrew's `libomp`:
+On macOS you may need to point CMake at Homebrew's `libomp`:
 
 ```bash
 cmake -DOpenMP_C_LIB_NAMES="omp" -DOpenMP_CXX_LIB_NAMES="omp" ..
 ```
+
+GLFW and GLM are expected on the compiler's default search path
+(e.g. `brew install glfw glm`).
+
+### Windows (MSVC + vcpkg)
+
+Windows uses a **native** Vulkan driver (no MoltenVK) and [vcpkg](https://github.com/microsoft/vcpkg)
+to supply GLFW and GLM. The `vcpkg.json` manifest in the repo root lists those
+dependencies, so vcpkg installs them automatically on the first CMake configure.
+
+1. **Vulkan SDK** — install the [LunarG SDK](https://vulkan.lunarg.com/sdk/home#windows)
+   (headers, `vulkan-1.lib`, the `glslc` shader compiler, validation layers). It sets the
+   `VULKAN_SDK` environment variable.
+   ```powershell
+   winget install --id KhronosGroup.VulkanSDK
+   ```
+   Restart your shell/IDE afterward so `VULKAN_SDK` is visible (or bake it into the preset below).
+2. **Visual Studio 2022** with the *Desktop development with C++* workload (MSVC + Windows SDK).
+3. **vcpkg** — a bootstrapped checkout. CLion ships one under `~/.vcpkg-clion/vcpkg`; otherwise
+   `git clone https://github.com/microsoft/vcpkg && .\vcpkg\bootstrap-vcpkg.bat`.
+4. **`CMakeUserPresets.json`** — create this in the repo root. It is **git-ignored** because it
+   holds your machine's absolute paths. Copy the template below and edit the two paths
+   (`CMAKE_TOOLCHAIN_FILE` → your vcpkg, `VULKAN_SDK` → your SDK version):
+   ```json
+   {
+     "version": 3,
+     "configurePresets": [
+       {
+         "name": "windows-release",
+         "generator": "Ninja",
+         "binaryDir": "${sourceDir}/cmake-build-release",
+         "cacheVariables": {
+           "CMAKE_BUILD_TYPE": "Release",
+           "CMAKE_TOOLCHAIN_FILE": "C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
+         },
+         "environment": { "VULKAN_SDK": "C:/VulkanSDK/<version>" }
+       }
+     ]
+   }
+   ```
+   Add a matching `windows-debug` preset (`CMAKE_BUILD_TYPE: Debug`, `cmake-build-debug`) if you
+   want a debug profile. Baking `VULKAN_SDK` into the preset means CMake finds Vulkan even if your
+   IDE was launched before the SDK was installed.
+5. **Configure & build.** From a *Developer PowerShell for VS* (so `cl.exe` is on `PATH`):
+   ```powershell
+   cmake --preset windows-release
+   cmake --build cmake-build-release --target GravitySimulator
+   ```
+   Or just open the folder in **CLion** / **Visual Studio**, which provide the MSVC environment
+   automatically — in CLion, enable the preset under
+   *Settings → Build, Execution, Deployment → CMake* and Run.
+
+> **Benchmarking note:** always use the **Release** preset. A Debug MSVC build is several times
+> slower (no optimization + checked-iterator overhead in the OpenMP hot loops), which makes
+> CPU-side frame costs dominate and is not representative of real performance.
+
+### Selecting the GPU
+
+`VulkanApp::pickPhysicalDevice()` prefers a **discrete** GPU and prints its choice
+(`Selected GPU: ...`) at startup. On a laptop with switchable graphics this prevents the sim from
+running on a weak integrated GPU. If you have several GPUs and want a specific one, that function
+is where to change the selection.
 
 ## Development Notes
 

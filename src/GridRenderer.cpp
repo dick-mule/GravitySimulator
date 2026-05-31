@@ -19,7 +19,18 @@
 #elif defined(__linux__)
 #include <unistd.h>
 #elif defined(_WIN32)
+// Keep <windows.h> from polluting the global namespace: NOMINMAX stops the
+// min/max macros that break std::max, and MemoryBarrier must be undef'd because
+// it is a macro (expanding to __faststorefence) that collides with
+// vk::MemoryBarrier.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#undef MemoryBarrier
 #endif
 
 namespace

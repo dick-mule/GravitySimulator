@@ -11,6 +11,15 @@ find_package(Vulkan REQUIRED)
 # Find GLFW
 find_package(glfw3 3.3 REQUIRED)
 
+# Find GLM. On Windows/Linux (e.g. via vcpkg) the config package is required so
+# the include dirs are wired up explicitly. On macOS, Homebrew's include path is
+# searched implicitly, so a missing config is non-fatal (QUIET fallback).
+if(APPLE)
+    find_package(glm CONFIG QUIET)
+else()
+    find_package(glm CONFIG REQUIRED)
+endif()
+
 # ===================== OpenMP (for CPU threading) =====================
 if(APPLE)
     # Homebrew libomp paths (works for both Intel and Apple Silicon)
@@ -85,6 +94,12 @@ add_dependencies(GravitySimulator Shaders)
 
 # Link libraries
 target_link_libraries(GravitySimulator glfw Vulkan::Vulkan)
+
+# GLM is header-only; link the imported target when found so its include
+# directories propagate (required on the vcpkg/Windows path).
+if(glm_FOUND)
+    target_link_libraries(GravitySimulator glm::glm)
+endif()
 
 if(OpenMP_CXX_FOUND)
     target_link_libraries(GravitySimulator OpenMP::OpenMP_CXX)

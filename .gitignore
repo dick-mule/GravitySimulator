@@ -4,3 +4,17 @@
 /cmake-build-release/
 .DS_Store
 **/.DS_Store
+
+# Build output (CLion uses cmake-build-*; these cover CLI/scratch builds)
+/build/
+/build-win/
+**/build/
+
+# vcpkg manifest-mode install tree (in case it lands outside a build dir)
+vcpkg_installed/
+**/vcpkg_installed/
+
+# Machine-specific CMake presets: these hold absolute toolchain / SDK paths
+# (vcpkg.cmake location, VULKAN_SDK) and must not be shared. See README for a
+# template to recreate your own.
+CMakeUserPresets.json

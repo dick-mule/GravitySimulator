@@ -173,7 +173,7 @@ void FlatGeometry::warpGrid(
     const std::vector<Vertex>& base = baseGrid();
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < base.size(); ++v )
+    for ( int v = 0; v < static_cast<int>(base.size()); ++v )
     {
         Vertex vertex = base[v];
         const float rawDepth = warpDepth(vertex.position, bodies, warp);
@@ -348,7 +348,7 @@ void SphericalGeometry::warpGrid(
     const std::vector<Vertex>& base = baseGrid();
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < base.size(); ++v )
+    for ( int v = 0; v < static_cast<int>(base.size()); ++v )
     {
         Vertex vertex = base[v];
 
@@ -505,7 +505,7 @@ void HyperbolicGeometry::warpGrid(
     const float k = m_GridScale; // paraboloid scale: y = (x^2 - z^2) / k
 
 #pragma omp parallel for
-    for ( size_t v = 0; v < base.size(); ++v )
+    for ( int v = 0; v < static_cast<int>(base.size()); ++v )
     {
         Vertex vertex = base[v];
         const float rawDepth = warpDepth(vertex.position, bodies, warp);

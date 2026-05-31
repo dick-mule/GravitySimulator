@@ -107,7 +107,7 @@ void Simulation::step(float deltaTime)
 
     // Step 1: velocity-Verlet half-step (kick + drift) and reset accelerations.
     #pragma omp parallel for schedule(dynamic)
-    for ( size_t i = 0; i < m_Bodies.size(); ++i )
+    for ( int i = 0; i < static_cast<int>(m_Bodies.size()); ++i )
     {
         auto& obj = m_Bodies[i]->m_Object;
         m_Geometry->updatePosition(obj, deltaTime, R, true);
@@ -120,7 +120,7 @@ void Simulation::step(float deltaTime)
     std::vector<glm::vec3> deltaAcc(nBodies, glm::vec3(0.0f));
 
     #pragma omp parallel for schedule(dynamic)
-    for ( size_t i = 0; i < nBodies; ++i )
+    for ( int i = 0; i < static_cast<int>(nBodies); ++i )
     {
         for ( size_t j = i + 1; j < nBodies; ++j )
         {   // Only j > i, to avoid double-counting.
@@ -202,7 +202,7 @@ void Simulation::step(float deltaTime)
 
     // Merge the accumulated accelerations back into the bodies.
     #pragma omp parallel for schedule(dynamic)
-    for ( size_t i = 0; i < nBodies; ++i )
+    for ( int i = 0; i < static_cast<int>(nBodies); ++i )
         m_Bodies[i]->m_Object.acceleration += deltaAcc[i];
 
     // Step 3: second Verlet half-step + append to motion trails.
@@ -482,10 +482,15 @@ void Simulation::advanceRayOneStep(LightRay& ray, float deltaTime)
 // Dynamic mode: advance every live ray one geodesic step (called from step()).
 void Simulation::advanceRays(float deltaTime)
 {
+    // MSVC's OpenMP 2.0 only accepts canonical index-based loops, not
+    // range-based for, so iterate by index here.
 #pragma omp parallel for
-    for ( auto& ray : m_Rays )
+    for ( int i = 0; i < static_cast<int>(m_Rays.size()); ++i )
+    {
+        LightRay& ray = m_Rays[i];
         if ( ray.active )
             advanceRayOneStep(ray, deltaTime);
+    }
 }
 
 void Simulation::resetTwoBody()

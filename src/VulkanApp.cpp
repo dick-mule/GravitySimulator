@@ -122,23 +122,50 @@ void VulkanApp::createInstance()
            .setEngineVersion(VK_MAKE_VERSION(1, 0, 0))
            .setApiVersion(VK_API_VERSION_1_2);
 
+    // GLFW already knows which surface extensions this platform needs
+    // (VK_KHR_surface + VK_KHR_win32_surface on Windows, VK_EXT_metal_surface /
+    // VK_MVK_macos_surface on macOS, etc.), so start from its required set.
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    std::vector<const char*> add_extensions = {
-        VK_KHR_SURFACE_EXTENSION_NAME,
-        VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
-        VK_MVK_MACOS_SURFACE_EXTENSION_NAME2
+
+    // Only enable instance extensions the loader actually advertises, so the
+    // same code runs on a native driver (Windows/Linux) and on a portability
+    // driver (macOS/MoltenVK). Hard-coding the macOS extensions here made the
+    // app crash at instance creation on a native Vulkan driver.
+    const auto availableExtensions = vk::enumerateInstanceExtensionProperties();
+    const auto hasInstanceExtension = [&](const char* name)
+    {
+        for ( const auto& ext : availableExtensions )
+            if ( std::strcmp(ext.extensionName, name) == 0 )
+                return true;
+        return false;
     };
-    for ( const auto& extension : add_extensions )
-        extensions.push_back(extension);
+    const auto alreadyRequested = [&](const char* name)
+    {
+        for ( const char* e : extensions )
+            if ( std::strcmp(e, name) == 0 )
+                return true;
+        return false;
+    };
+
+    vk::InstanceCreateFlags instanceFlags{};
+
+    // On a portability driver (MoltenVK) the GPU is only enumerated if we opt in
+    // via VK_KHR_portability_enumeration + this flag. On a native driver the
+    // extension is absent, so we skip both and behaviour is unchanged.
+    if ( hasInstanceExtension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) )
+    {
+        if ( !alreadyRequested(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) )
+            extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        instanceFlags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
+    }
 
     vk::InstanceCreateInfo createInfo{};
     createInfo.setPApplicationInfo(&appInfo)
-              .setEnabledExtensionCount(static_cast<uint32_t>(extensions.size()))
               .setPEnabledExtensionNames(extensions)
-              .setEnabledLayerCount(0);
-    createInfo.setFlags(vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR);
+              .setEnabledLayerCount(0)
+              .setFlags(instanceFlags);
 
     m_Instance = vk::createInstance(createInfo);
     if ( !m_Instance )
@@ -159,17 +186,30 @@ void VulkanApp::pickPhysicalDevice()
     if ( devices.empty() )
         throw std::runtime_error("Failed to find GPUs with Vulkan support");
 
+    // Prefer a discrete GPU. On laptops the integrated GPU is often enumerated
+    // first, and picking it can be many times slower than the dedicated card
+    // (e.g. AMD Radeon 610M iGPU vs an NVIDIA RTX discrete GPU).
+    vk::PhysicalDevice fallback;
     for ( const auto& device : devices )
     {
-        if ( isDeviceSuitable(device) )
+        if ( !isDeviceSuitable(device) )
+            continue;
+        if ( !fallback )
+            fallback = device; // first suitable device, regardless of type
+        if ( device.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu )
         {
             m_PhysicalDevice = device;
             break;
         }
     }
+    if ( !m_PhysicalDevice )
+        m_PhysicalDevice = fallback; // no discrete GPU available; use what we have
 
     if ( !m_PhysicalDevice )
         throw std::runtime_error("Failed to find a suitable GPU");
+
+    std::cout << "Selected GPU: "
+              << m_PhysicalDevice.getProperties().deviceName.data() << std::endl;
 }
 
 bool VulkanApp::isDeviceSuitable(const vk::PhysicalDevice& device) const
